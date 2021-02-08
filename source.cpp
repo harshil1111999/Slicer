@@ -12,12 +12,13 @@ int main()
     int k = 19;
     y = z;
     x = y + z;
-    int i = 0;
-    while(i < n)
+    int i;
+    for(i=0;i<n;i=i+1)
     {
         cout<<i<<endl;
-        i = i + 1;
+        x = x + 1;
     }
+    cout<<i<<endl;
     if(x > 0)
     {
         y = y + 1;

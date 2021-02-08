@@ -9,6 +9,7 @@
 #include<queue>
 #include<set>
 #include<stack>
+#include <algorithm>
 using namespace std;
 unordered_map<string, int> keywords; // for inbuilt keywords
 unordered_map<string, struct node*> code; // maps line number to node
@@ -19,7 +20,7 @@ stack<struct node*> control_dependence;
 string file_opening_line = "";
 vector<string> source_code;
 vector<int> conditional_statements;
-bool loop_flag = 0;
+bool while_loop_flag = 0, for_loop_flag = 0;
 
 struct node {
     vector<struct node*> parent;
@@ -65,11 +66,108 @@ pair<int,string> find_token(int i, string line) {
     return {i, temp};
 }
 
-void process_for(string line, int currentIndex, string number) {
+void process_definition(string line, int currentIndex, string number) {
+    int i = currentIndex;
+    line = line.substr(i);
+    vector<string> tokens;
+    string temp;
+    stringstream temp_line(line);
+    while(getline(temp_line, temp, '=')) {
+        tokens.push_back(temp);
+    }
+    if(tokens.size() < 2) {
+        return;
+    }
 
+    struct node* temp_node;
+    if(code.find(number) == code.end()) {
+        temp_node = new node(number,line);
+    } else {
+        temp_node = code[number];
+    }
+    string variable_name;
+    while(i < tokens[0].length()) {
+        pair<int,string> token = find_token(i, tokens[0]);
+        i = token.first;
+        if(datatypes.find(token.second) == datatypes.end() && token.second.length() > 0)
+            variable_name = token.second;
+    }
+    (temp_node->defined).insert(variable_name);
+    i = 0;
+    line = tokens[1];
+    while(i < line.length()) {
+        pair<int,string> token = find_token(i, line);
+        
+        i = token.first;
+        string temp = token.second;
+        if((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
+            continue;
+        } else if(variable_name_to_nodes.find(temp) == variable_name_to_nodes.end()) {
+            cout<<"The variable name "<<temp<<" does not exist in definition portion\n";
+        } else {
+            (temp_node->used).insert(temp);
+            vector<struct node*> v = variable_name_to_nodes[temp];
+            temp_node->parent.push_back(v[v.size()-1]);
+            // for(int j=0;j<v.size();j++) {
+            //     temp_node->parent.push_back(v[j]);
+            // }
+        }
+    }
+    if(!control_dependence.empty()) {
+        temp_node->parent.push_back(control_dependence.top());
+    }
+    variable_name_to_nodes[variable_name].push_back(temp_node);
+    code[number] = temp_node;
+}
+
+void process_for(string line, int currentIndex, string number) {
+    int i = currentIndex;
+    struct node* temp_node = new node(number, line);
+    code[number] = temp_node;
+    string temp1;
+    vector<string> tokenized_line;
+    vector<string> tokenized_number;
+    stringstream temp1_line(line.substr(currentIndex + 1));
+    while(getline(temp1_line, temp1, ';')) {
+        tokenized_line.push_back(temp1);
+    }
+    stringstream temp2_line(number);
+    while(getline(temp2_line, temp1, '_')) {
+        tokenized_number.push_back(temp1);
+    }
+    
+    if(tokenized_number[1] == "0") {
+        process_definition(tokenized_line[0], 0, number);
+    }
+
+    i = 0;
+    while(i < tokenized_line[1].length()) {
+        pair<int,string> token = find_token(i, tokenized_line[1]);
+        
+        i = token.first;
+        string temp = token.second;
+        if((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
+            continue;
+        } else if(variable_name_to_nodes.find(temp) == variable_name_to_nodes.end()) {
+            cout<<"The variable name "<<temp<<" does not exist in if portion\n";
+        } else {
+            (temp_node->used).insert(temp);
+            vector<struct node*> v = variable_name_to_nodes[temp];
+            // cout<<v[v.size()-1]->line_number<<" in for loop"<<endl;
+            temp_node->parent.push_back(v[v.size()-1]);
+            // for(int i=0;i<v.size();i++) {
+            //     temp_node->parent.push_back(v[i]);
+            // }
+        }
+    }
+    // if(!control_dependence.empty()) {
+    //     temp_node->parent.push_back(control_dependence.top());
+    // }
+    // control_dependence.push(temp_node);
 }
 
 void process_while(string line, int currentIndex, string number) {
+    // loop_flag = 1;
     int i = currentIndex;
     struct node* temp_node = new node(number, line);
     while(i < line.length()) {
@@ -91,6 +189,10 @@ void process_while(string line, int currentIndex, string number) {
             // }
         }
     }
+    // if(!control_dependence.empty()) {
+    //     temp_node->parent.push_back(control_dependence.top());
+    // }
+    // control_dependence.push(temp_node);
     code[number] = temp_node;
 }
 
@@ -176,6 +278,7 @@ void process_cout(string line, int currentIndex, string number) {
         } else {
             vector<struct node*> v = variable_name_to_nodes[temp];
             (temp_node->used).insert(temp);
+            // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
             temp_node->parent.push_back(v[v.size()-1]);
             // for(int j=0;j<v.size();j++) {
             //     temp_node->parent.push_back(v[j]);
@@ -185,55 +288,6 @@ void process_cout(string line, int currentIndex, string number) {
     if(!control_dependence.empty()) {
         temp_node->parent.push_back(control_dependence.top());
     }
-    code[number] = temp_node;
-}
-
-void process_definition(string line, int currentIndex, string number) {
-    int i = currentIndex;
-    line = line.substr(i);
-    vector<string> tokens;
-    string temp;
-    stringstream temp_line(line);
-    while(getline(temp_line, temp, '=')) {
-        tokens.push_back(temp);
-    }
-    if(tokens.size() < 2) {
-        return;
-    }
-
-    struct node* temp_node = new node(number,line);
-    string variable_name;
-    while(i < tokens[0].length()) {
-        pair<int,string> token = find_token(i, tokens[0]);
-        i = token.first;
-        if(datatypes.find(token.second) == datatypes.end() && token.second.length() > 0)
-            variable_name = token.second;
-    }
-    (temp_node->defined).insert(variable_name);
-    i = 0;
-    line = tokens[1];
-    while(i < line.length()) {
-        pair<int,string> token = find_token(i, line);
-        
-        i = token.first;
-        string temp = token.second;
-        if((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
-            continue;
-        } else if(variable_name_to_nodes.find(temp) == variable_name_to_nodes.end()) {
-            cout<<"The variable name "<<temp<<" does not exist in definition portion\n";
-        } else {
-            (temp_node->used).insert(temp);
-            vector<struct node*> v = variable_name_to_nodes[temp];
-            temp_node->parent.push_back(v[v.size()-1]);
-            // for(int j=0;j<v.size();j++) {
-            //     temp_node->parent.push_back(v[j]);
-            // }
-        }
-    }
-    if(!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
-    }
-    variable_name_to_nodes[variable_name].push_back(temp_node);
     code[number] = temp_node;
 }
 
@@ -272,6 +326,41 @@ void process(string line, string number) {
         while(j < line.length() && line[j] != ' ') {
             temp1 += line[j++];
         }
+        if(temp1 == "{") { // to mark enterd into loop
+            string temp2,temp3;
+            stringstream temp2_line(number);
+            getline(temp2_line, temp2, '_');
+            pair<int, string> p = find_token(0, source_code[stoi(temp2)-1]);
+            if(p.second == "while" || p.second == "for") { // to check that it is loop and not if else statement
+                getline(temp2_line, temp3, '_');
+                string temp4 = to_string(stoi(temp2) - 1) + '_' + temp3;
+                if(p.second == "while")
+                    while_loop_flag = 1;
+                else {
+                    string temp1;
+                    vector<string> tokenized_line;
+                    stringstream temp1_line(code[temp4]->statement);
+                    while(getline(temp1_line, temp1, ';')) {
+                        tokenized_line.push_back(temp1);
+                    }
+                    process_definition(tokenized_line[2].substr(0, tokenized_line[2].length()-1), 0, temp4);
+                    for_loop_flag = 1;
+                }
+                struct node* temp_node = code[temp4];
+                if(!control_dependence.empty()) {
+                    temp_node->parent.push_back(control_dependence.top());
+                }
+                control_dependence.push(temp_node);
+            }
+        }
+        if(temp1 == "}" && (while_loop_flag || for_loop_flag)) { // for to mark loop is over
+            if(while_loop_flag)
+                while_loop_flag = 0;
+            if(for_loop_flag)
+                for_loop_flag = 0;
+            control_dependence.pop();
+            return;
+        }
         // if(temp1 == "}") {
         //     cout<<number<<" "<<control_dependence.size()<<" ";
         //     if(!control_dependence.empty()) {
@@ -306,7 +395,7 @@ void find_trace() {
         string temp2;
         stringstream temp2_line(temp1);
         getline(temp2_line, temp2, '_');
-        process(source_code[stoi(temp2)], stoi(temp1));
+        process(source_code[stoi(temp2)], temp1);
         if(code.find(temp1) != code.end()) {
             code[temp1]->mark = true;
         }
@@ -330,6 +419,25 @@ void find_trace() {
 //     }
 // }
 
+bool cmp(string a, string b) {
+    string temp1, temp2;
+    vector<string> a_temp, b_temp;
+    stringstream temp1_line(a), temp2_line(b);
+    while(getline(temp1_line, temp1, '_')) {
+        a_temp.push_back(temp1);
+    }
+    while(getline(temp2_line, temp2, '_')) {
+        b_temp.push_back(temp2);
+    }
+    if(a_temp.size() > 1 && b_temp.size() > 1 && a_temp[1] < b_temp[1])
+        return 1;
+    if(a_temp.size() > 1 && b_temp.size() > 1 && a_temp[1] > b_temp[1])
+        return 0;
+    if(a_temp[0] < b_temp[0])
+        return 1;
+    return 0;
+}
+
 void show_output(string line_number, string variable_name) {
     struct node* temp_node = code[line_number];
     // for(int i=0;i<temp_node->parent.size();i++) {
@@ -345,22 +453,31 @@ void show_output(string line_number, string variable_name) {
     //     cout<<endl;
     // }
     // cout<<temp_node->mark<<" "<<temp_node->line_number<<endl;
-    set<int> ans;
-    queue<int> q;
+    unordered_set<string> ans; 
+    queue<string> q;
     q.push(line_number);
     while(!q.empty()) {
-        int curr = q.front();
+        string curr = q.front();
         ans.insert(curr);
         q.pop();
-        vector<struct node*> v = code[to_string(curr)]->parent;
+        // cout<<curr<<" output\n";
+        vector<struct node*> v = code[curr]->parent;
         for(int i=0;i<v.size();i++) {
-            if(v[i]->mark) {
+            if(v[i]->mark && ans.find(v[i]->line_number) == ans.end()) {
+                // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
                 q.push(v[i]->line_number);
             }
         }
     }
+
+    vector<string> ans_temp;
     for(auto it:ans) {
-        cout<<code[to_string(it)]->statement<<"\n";
+        ans_temp.push_back(it);
+    }
+    sort(ans_temp.begin(), ans_temp.end(), cmp);
+
+    for(int j=0;j<ans_temp.size();j++) {
+        cout<<ans_temp[j]<<" : "<<code[ans_temp[j]]->statement<<"\n";
     }
 }
 
@@ -375,7 +492,7 @@ int can_insert(string line, int number) {
         return 1;
     }
 
-    if(loop_flag && i < line.length() && line[i] == '}') {
+    if((while_loop_flag || for_loop_flag) && i < line.length() && line[i] == '}') {
         return 4;
     }
 
@@ -394,8 +511,13 @@ int can_insert(string line, int number) {
     }
 
     if(temp == "while") {
-        loop_flag = 1;
+        while_loop_flag = 1;
         return 3;
+    }
+
+    if(temp == "for") {
+        for_loop_flag = 1;
+        return 5;
     }
 
     if(temp == "main" && i < line.length() && line[i] == '(') {
@@ -430,19 +552,30 @@ int main() {
     ofstream output;
     output.open("output.cpp");
     output<<"#include<sstream>\n#include<fstream>\n";
-    int error_line_number;
+    string error_line_number;
     string variable_name;
-    cout<<"Enter line number where you find an error : ";
+    cout<<"Enter line number where you find an error(format in case of loop is [line number]_[iteration number starting at 0]) : ";
     cin>>error_line_number;
     cout<<"Enter variable name : ";
     cin>>variable_name;
     cout<<"Source file parsing is in progress...\n";
     int line_count = 0;
+    vector<string> temp1;
+    string temp2;
+    stringstream temp2_line(error_line_number);
+    while(getline(temp2_line, temp2, '_')) {
+        temp1.push_back(temp2);
+    }
+    bool error_in_loop = 0, loop_closed = 0;
+    if(temp1.size() > 1) {
+        error_in_loop = 1;
+    }
+    int end = stoi(temp1[0]);
     while (fin) { 
         getline(fin, line);
         source_code.push_back(line);
         line_count++;
-        if(line_count > error_line_number) {
+        if((error_in_loop && loop_closed) || (!error_in_loop && line_count > end)) {
             output<<line+"\n";
             if(fin.eof()) {
                 break;
@@ -454,8 +587,8 @@ int main() {
         if(flag == 2) {   // general case
 
             string temp_line;
-            if(loop_flag) {
-                temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(i)" + "<<\"#\"";
+            if(while_loop_flag || for_loop_flag) {
+                temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)" + "<<\"#\"";
             } else {
                 temp_line = "\"" + to_string(line_count) + "#\"";
             }
@@ -469,7 +602,7 @@ int main() {
             }
             for(int i=0;i<conditional_statements.size();i++) {
                 string temp_line;
-                if(loop_flag) {
+                if(while_loop_flag || for_loop_flag) {
                     break;
                 } else {
                     temp_line = "\"" + to_string(conditional_statements[i]) + "#\"";
@@ -477,13 +610,13 @@ int main() {
                 output<<"result<<" + temp_line + ";\n";
             }
             string temp_line;
-            if(loop_flag) {
-                temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(i)" + "<<\"#\"";
+            if(while_loop_flag || for_loop_flag) {
+                temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)" + "<<\"#\"";
             } else {
                 temp_line = "\"" + to_string(line_count) + "#\"";
             }
             output<<"result<<" + temp_line + ";\n"; 
-        } else if(flag == 3) { // loop case
+        } else if(flag == 3) { // while loop case
             int j = 0;
             while(j < line.length() && line[j] != '(') {
                 j++;
@@ -492,13 +625,31 @@ int main() {
             string temp1 = line.substr(0, j);
             string temp2 = line.substr(j);
             string temp_line = temp1;
-            temp_line += "result<<\"" + to_string(line_count) + "_\"" + "<<to_string(i)<<\"#\" && " + temp2 + "\n";
+            temp_line += "result<<\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)<<\"#\" && " + temp2 + "\n";
+            output<<"int loop_counter = 0;\n";
             output<<temp_line;
-        } else if(flag == 4) { // loop closing case
-            string temp_line = "\"" + to_string(line_count) + "_\"<<to_string(i-1)<<\"#\"";
+        } else if(flag == 4) { // while and for loop closing case
+            string temp_line = "\"" + to_string(line_count) + "_\"<<to_string(loop_counter)<<\"#\"";
             output<<"result<<" + temp_line + ";\n";
+            output<<"loop_counter = loop_counter + 1;\n";
             output<<line+"\n";
-            loop_flag = 0;
+            if(while_loop_flag)
+                while_loop_flag = 0;
+            else
+                for_loop_flag = 0;
+            loop_closed = 1;
+        } else if(flag == 5) { // for loop case
+            int j = 0;
+            while(j < line.length() && line[j] != ';') {
+                j++;
+            }
+            j++;
+            string temp1 = line.substr(0, j);
+            string temp2 = line.substr(j);
+            string temp_line = temp1;
+            temp_line += "result<<\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)<<\"#\" && " + temp2 + "\n";
+            output<<"int loop_counter = 0;\n";
+            output<<temp_line;
         } else { // if, else, #, main, using case
             output<<line+"\n";
         }
@@ -514,4 +665,14 @@ int main() {
     find_trace();
 
     show_output(error_line_number, variable_name);
+
+    // if(variable_name_to_nodes.find(variable_name) == variable_name_to_nodes.end()) {
+    //     cout<<"error in "+ variable_name +"\n";
+    // } else {
+    //     cout<<"last line\n";
+    //     vector<struct node*> v = code["i"]->parent;
+    //     for(int i=0;i<v.size();i++) {
+    //         cout<<v[i]->line_number<<endl;
+    //     }
+    // }
 }
