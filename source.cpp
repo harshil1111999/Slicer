@@ -2,6 +2,12 @@
 #include<conio.h>
 #include<iostream>
 using namespace std;
+void fun(int x, int *y)
+{
+    *y = x + *y;
+    cout<<*y<<endl;
+}
+
 int main() 
 {
     int x,y,z,n;
@@ -18,6 +24,7 @@ int main()
         cout<<i<<endl;
         x = x + 1;
     }
+    fun(x,&y);
     cout<<i<<endl;
     if(x > 0)
     {
