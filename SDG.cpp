@@ -15,6 +15,7 @@ unordered_map<string, int> keywords; // for inbuilt keywords
 unordered_map<string, struct node*> code; // maps line number to node
 unordered_map<string, vector<struct node*>> variable_name_to_nodes; // for to find out all definition node of variable
 unordered_map<string, struct node*> function_map;
+unordered_map<struct node*, struct node*> return_statements;
 unordered_set<string> datatypes; // for inbuilt datatypes
 stack<struct node*> control_dependence;
 stack<string> control_dependence2; // for to create trace keep track of scope
@@ -27,10 +28,10 @@ bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_fl
 struct node {
     vector<struct node*> parent; // contains control and data dependences
     struct node* parametere_in_edge, *parametere_out_edge, *calling_edge; // parameter IN/OUT edge
-    struct node* affect_return, *return_link;
-    vector<struct node*> transitive_edge;
+    struct node* return_link;
+    vector<struct node*> transitive_edge, affect_return_edge;
     bool mark; // for dynamic dependence graph
-    bool flag_to_find_transitive_edge;
+    bool flag; // for transitive edge and affect return edge
     string line_number;
     string statement;
     unordered_set<string> used, defined;
@@ -40,10 +41,9 @@ struct node {
         parametere_out_edge = NULL;
         parametere_in_edge = NULL;
         calling_edge = NULL;
-        affect_return = NULL;
         return_link = NULL;
         
-        flag_to_find_transitive_edge = false;
+        flag = false;
         mark = false;
         line_number = number;
         statement = line;
@@ -58,6 +58,7 @@ void keywords_init() {
     keywords["else"] = keywords.size();
     keywords["cin"] = keywords.size();
     keywords["cout"] = keywords.size();
+    keywords["return"] = keywords.size();
 
     datatypes.insert("int");
     datatypes.insert("float");
@@ -218,7 +219,7 @@ void process_if(string line, int currentIndex, string number) {
         temp_node->parent.push_back(control_dependence.top());
         control_dependence.pop();
     }
-    control_dependence.push(temp_node);
+    // control_dependence.push(temp_node);
     while(i < line.length()) {
         pair<int,string> token = find_token(i, line);
         
@@ -260,7 +261,7 @@ void process_else(string line, int currentIndex, string number) {
         temp_node->parent.push_back(control_dependence.top());
         control_dependence.pop();
     }
-    control_dependence.push(temp_node);
+    // control_dependence.push(temp_node);
     code[number] = temp_node;
 }
 
@@ -323,12 +324,11 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
         q.push(v[i]);
         while(!q.empty()) {
             struct node* temp_node = q.front();
-            temp_node->flag_to_find_transitive_edge = true;
+            temp_node->flag = true;
             q.pop();
             vector<struct node*> v1 = temp_node->parent;
             for(int j=0;j<v1.size();j++) {
-                if(!v1[j]->flag_to_find_transitive_edge) {
-                    // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
+                if(!v1[j]->flag) {
                     q.push(v1[j]);
                 }
             }
@@ -336,7 +336,7 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
 
         vector<struct node*> v2 = function_map[function_name]->formal_in_nodes;
         for(int j=0;j<v2.size();j++) {
-            if(v2[j]->flag_to_find_transitive_edge) {
+            if(v2[j]->flag) {
                 function_calling_node->actual_out_nodes[i]->transitive_edge.push_back(function_calling_node->actual_in_nodes[j]);
             }
         }
@@ -345,11 +345,11 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
         q.push(v[i]);
         while(!q.empty()) {
             struct node* temp_node = q.front();
-            temp_node->flag_to_find_transitive_edge = false;
+            temp_node->flag = false;
             q.pop();
             vector<struct node*> v1 = temp_node->parent;
             for(int j=0;j<v1.size();j++) {
-                if(v1[j]->flag_to_find_transitive_edge) {
+                if(v1[j]->flag) {
                     // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
                     q.push(v1[j]);
                 }
@@ -358,10 +358,52 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
     }
 }
 
-void process_function_call(string line, string number, int currentIndex) {
+void find_affect_return_edge(struct node* function_calling_node, string function_name) {
+    struct node* return_node = return_statements[function_map[function_name]];
+    queue<struct node*> q;
+    
+    // to mark visited nodes
+    q.push(return_node);
+    while(!q.empty()) {
+        struct node* temp_node = q.front();
+        temp_node->flag = true;
+        q.pop();
+        vector<struct node*> v1 = temp_node->parent;
+        for(int j=0;j<v1.size();j++) {
+            if(!v1[j]->flag) {
+                // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
+                q.push(v1[j]);
+            }
+        }
+    }
+
+    vector<struct node*> v2 = function_map[function_name]->formal_in_nodes;
+    for(int j=0;j<v2.size();j++) {
+        if(v2[j]->flag) {
+            function_calling_node->affect_return_edge.push_back(function_calling_node->actual_in_nodes[j]);
+        }
+    }
+
+    // to unmark visited nodes
+    q.push(return_node);
+    while(!q.empty()) {
+        struct node* temp_node = q.front();
+        temp_node->flag = false;
+        q.pop();
+        vector<struct node*> v1 = temp_node->parent;
+        for(int j=0;j<v1.size();j++) {
+            if(v1[j]->flag) {
+                // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
+                q.push(v1[j]);
+            }
+        }
+    }
+}
+
+void process_function_call(string line, string number, int currentIndex, bool return_value_expects) {
     struct node* temp_node = new node(number, line); // node of function
+
     int i = currentIndex;
-    // int variable_count = 0;
     while(i < line.length()) {
         pair<int,string> token = find_token(i, line);
         
@@ -371,6 +413,9 @@ void process_function_call(string line, string number, int currentIndex) {
         if((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
             continue;
         } else {
+            // data dependence
+            temp_node->parent.push_back(variable_name_to_nodes[temp][variable_name_to_nodes[temp].size()-1]);
+
             string temp1 = temp + "_in";
             struct node* actual_in_node = new node(number, temp1 + " = " + temp);
             actual_in_node->parent.push_back(temp_node);
@@ -395,10 +440,16 @@ void process_function_call(string line, string number, int currentIndex) {
             //     temp_node->parent.push_back(v[j]);
             // }
         }
-        // variable_count++;
+    }
+
+    i = 0;
+    if(return_value_expects) {
+        while(i < line.length() && line[i] != '=') {
+            i++;
+        }
     }
     // to find name of function
-    pair<int, string> p = find_token(0, line);
+    pair<int, string> p = find_token(i, line);
     string function_name = p.second;
 
     // for parameter edge
@@ -420,13 +471,45 @@ void process_function_call(string line, string number, int currentIndex) {
     if(temp_node->actual_out_nodes.size() > 0) {
         find_transitive_dependence_edge(temp_node, function_name);
     }
+
+    //return link edge
+    if(return_statements.find(function_map[function_name]) != return_statements.end()) {
+        struct node* return_node = return_statements[function_map[function_name]];
+        temp_node->return_link = return_node;
+    }
+
+    //affect return edge
+    if(return_value_expects) {
+        find_affect_return_edge(temp_node, function_name);
+    }
+    
+    //if return_value_expects than find which variable is defined
+    if(return_value_expects) {
+        int i = 0;
+        while(i < line.length() && line[i] != '=') {
+            i++;
+        }
+        while(i >= 0 && !((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90))) {
+            i--;
+        }
+        string temp = "";
+        while(i >= 0 && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90))) {
+            temp = line[i--] + temp;
+        }
+        variable_name_to_nodes[temp].push_back(temp_node);
+    }
+
+    //control dependence
+    if(!control_dependence.empty()) {
+        temp_node->parent.push_back(control_dependence.top());
+    }
     code[number] = temp_node;
 }
 
 void process_function_definition(string line, string number, int currentIndex) {
     variable_name_to_nodes.clear();                        /////////      ********       Alert!!!!!!!!
     struct node* temp_node = new node(number, line); // node of function
-    control_dependence.push(temp_node);
+    // control_dependence.push(temp_node);
     int i = currentIndex;
     while(i < line.length()) {
         pair<int,string> token = find_token(i, line);
@@ -470,6 +553,52 @@ void process_function_definition(string line, string number, int currentIndex) {
     code[number] = temp_node;
 }
 
+void process_return(string line, int currentIndex, string number) {
+    int i = currentIndex;
+    struct node* temp_node = new node(number, line);
+    while(i < line.length()) {
+        pair<int,string> token = find_token(i, line);
+        
+        i = token.first;
+        string temp = token.second;
+
+        if((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'' || temp == "endl") {
+            continue;
+        } else if(variable_name_to_nodes.find(temp) == variable_name_to_nodes.end()) {
+            cout<<"The variable name "<<temp<<" does not exist in cout portion\n";
+        } else {
+            vector<struct node*> v = variable_name_to_nodes[temp];
+            (temp_node->used).insert(temp);
+            // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
+            temp_node->parent.push_back(v[v.size()-1]);
+            // for(int j=0;j<v.size();j++) {
+            //     temp_node->parent.push_back(v[j]);
+            // }
+        }
+    }
+    if(!control_dependence.empty()) {
+        temp_node->parent.push_back(control_dependence.top());
+    }
+    code[number] = temp_node;
+    return_statements[control_dependence.top()] = temp_node;
+
+    // to set data depenedence for formal out node
+    struct node* function_node = control_dependence.top();
+    vector<struct node*> v = function_node->formal_out_nodes;
+    for(int i=0;i<v.size();i++) {
+        string temp = v[i]->statement;
+        int j = 0;
+        while(j < temp.length() && temp[j] != '*') {
+            j++;
+        }
+        j++;
+        temp = temp.substr(j);
+        vector<struct node*> v1 = variable_name_to_nodes[temp];
+        v[i]->parent.push_back(v1[v1.size()-1]);
+    }
+    control_dependence.pop();
+}
+
 void process(string line, string number) {
     int i = 0;
     pair<int,string> token = find_token(i, line);
@@ -494,6 +623,9 @@ void process(string line, string number) {
                 break;
             case 6:
                 process_cout(line,i,number);
+                break;
+            case 7:
+                process_return(line,i,number);
                 break;
         }
     } else {
@@ -543,6 +675,8 @@ void process(string line, string number) {
                     string temp = to_string(stoi(temp2) - 1);
                     control_dependence.push(code[temp]);
                 }
+            } else {
+                control_dependence.push(code[to_string(stoi(temp2) - 1)]);
             }
             return;
         }
@@ -570,21 +704,31 @@ void process(string line, string number) {
             control_dependence.pop();
             return;
         }
+
+        // to find if it is function call or definition or else
         j = 0;
         while(j < line.length() && line[j] == ' ') {
             j++;
         }
         temp1 = "";
+        bool return_value_expects = 0;
         while(j < line.length() && line[j] != '(') {
+            if(line[j] == '=') {
+                return_value_expects = 1;
+            }
             if(line[j] != '(') {
                 temp1 += line[j];
             }
             j++;
         }
-        if(function_map.find(temp1) != function_map.end()) {
-            process_function_call(line, number, j);
-        } else if(j < line.length()) {
-            process_function_definition(line, number, j);
+        if(j < line.length()) {
+            if(return_value_expects) {
+                process_function_call(line, number, j, 1);
+            } else if(function_map.find(temp1) != function_map.end()) {
+                process_function_call(line, number, j, 0);
+            } else if(j < line.length()) {
+                process_function_definition(line, number, j);
+            } 
         } else {
             process_definition(line,0,number);
         }
@@ -604,11 +748,6 @@ void find_trace() {
     string temp1;
     stringstream temp_line(temp);
     while(getline(temp_line, temp1, '#')) {
-
-
-        // changed
-
-
         string temp2;
         stringstream temp2_line(temp1);
         getline(temp2_line, temp2, '_');
@@ -713,6 +852,15 @@ void show_output(string line_number, string variable_name) {
                 q.push(v[i]);
             }
         }
+
+        //affect return edges
+        v = curr->affect_return_edge;
+        for(int i=0;i<v.size();i++) {
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
+            if(ans.find(v[i]) == ans.end()) {
+                q.push(v[i]);
+            }
+        }
     }
 
     // cout<<"1st phase complete\n";
@@ -740,7 +888,6 @@ void show_output(string line_number, string variable_name) {
         }
 
         // to find parameter out nodes
-
         if(curr->parametere_out_edge != NULL && ans.find(curr->parametere_out_edge) == ans.end()) {
             // cout<<curr->statement<<" -> "<<curr->parametere_out_edge->statement<<" show output parameter"<<endl;
             ans.insert(curr->parametere_out_edge);
@@ -755,6 +902,23 @@ void show_output(string line_number, string variable_name) {
                 ans.insert(v[i]);
                 q.push(v[i]);
             }
+        }
+
+        // affect return nodes
+        v = curr->affect_return_edge;
+        for(int i=0;i<v.size();i++) {
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
+            if(ans.find(v[i]) == ans.end()) {
+                ans.insert(v[i]);
+                q.push(v[i]);
+            }
+        }
+
+        // return link edge
+        if(curr->return_link != NULL && ans.find(curr->return_link) == ans.end()) {
+            // cout<<curr->statement<<" -> "<<curr->return_link->statement<<" show output return link"<<endl;
+            ans.insert(curr->return_link);
+            q.push(curr->return_link);
         }
     }
 

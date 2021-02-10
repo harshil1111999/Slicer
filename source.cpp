@@ -2,10 +2,14 @@
 #include<conio.h>
 #include<iostream>
 using namespace std;
-void fun(int x, int *y)
+int fun(int x, int *y)
 {
+    int k = 1;
+    x = x + 1;
     *y = x + *y;
     cout<<*y<<endl;
+    k = k + x;
+    return x;
 }
 
 int main() 
@@ -21,11 +25,11 @@ int main()
     int i;
     for(i=0;i<n;i=i+1)
     {
+        x = fun(x,&y);
         cout<<i<<endl;
         x = x + 1;
     }
-    fun(x,&y);
-    cout<<i<<endl;
+    cout<<x<<endl;
     if(x > 0)
     {
         y = y + 1;
