@@ -26,15 +26,24 @@ bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_fl
 
 struct node {
     vector<struct node*> parent; // contains control and data dependences
-    struct node* parametere_edge; // parameter IN/OUT edge
-    struct node* transitive_edge, *affect_return, *return_link;
+    struct node* parametere_in_edge, *parametere_out_edge, *calling_edge; // parameter IN/OUT edge
+    struct node* affect_return, *return_link;
+    vector<struct node*> transitive_edge;
     bool mark; // for dynamic dependence graph
+    bool flag_to_find_transitive_edge;
     string line_number;
     string statement;
     unordered_set<string> used, defined;
     vector<struct node*> formal_in_nodes, formal_out_nodes, actual_in_nodes, actual_out_nodes;
 
     node(string number, string line) {
+        parametere_out_edge = NULL;
+        parametere_in_edge = NULL;
+        calling_edge = NULL;
+        affect_return = NULL;
+        return_link = NULL;
+        
+        flag_to_find_transitive_edge = false;
         mark = false;
         line_number = number;
         statement = line;
@@ -305,14 +314,54 @@ void process_cout(string line, int currentIndex, string number) {
     code[number] = temp_node;
 }
 
-void find_transitive_dependence_edge(struct node* temp_node, string function_name) {
-    
+void find_transitive_dependence_edge(struct node* function_calling_node, string function_name) {
+    vector<struct node*> v = function_map[function_name]->formal_out_nodes;
+    for(int i=0;i<v.size();i++) {
+        queue<struct node*> q;
+        
+        // to mark visited nodes
+        q.push(v[i]);
+        while(!q.empty()) {
+            struct node* temp_node = q.front();
+            temp_node->flag_to_find_transitive_edge = true;
+            q.pop();
+            vector<struct node*> v1 = temp_node->parent;
+            for(int j=0;j<v1.size();j++) {
+                if(!v1[j]->flag_to_find_transitive_edge) {
+                    // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
+                    q.push(v1[j]);
+                }
+            }
+        }
+
+        vector<struct node*> v2 = function_map[function_name]->formal_in_nodes;
+        for(int j=0;j<v2.size();j++) {
+            if(v2[j]->flag_to_find_transitive_edge) {
+                function_calling_node->actual_out_nodes[i]->transitive_edge.push_back(function_calling_node->actual_in_nodes[j]);
+            }
+        }
+
+        // to unmark visited nodes
+        q.push(v[i]);
+        while(!q.empty()) {
+            struct node* temp_node = q.front();
+            temp_node->flag_to_find_transitive_edge = false;
+            q.pop();
+            vector<struct node*> v1 = temp_node->parent;
+            for(int j=0;j<v1.size();j++) {
+                if(v1[j]->flag_to_find_transitive_edge) {
+                    // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
+                    q.push(v1[j]);
+                }
+            }
+        }
+    }
 }
 
 void process_function_call(string line, string number, int currentIndex) {
     struct node* temp_node = new node(number, line); // node of function
     int i = currentIndex;
-    int variable_count = 0;
+    // int variable_count = 0;
     while(i < line.length()) {
         pair<int,string> token = find_token(i, line);
         
@@ -324,6 +373,7 @@ void process_function_call(string line, string number, int currentIndex) {
         } else {
             string temp1 = temp + "_in";
             struct node* actual_in_node = new node(number, temp1 + " = " + temp);
+            actual_in_node->parent.push_back(temp_node);
             variable_name_to_nodes[temp1].push_back(actual_in_node);
             (actual_in_node->used).insert(temp);
             (actual_in_node->defined).insert(temp1);
@@ -333,6 +383,7 @@ void process_function_call(string line, string number, int currentIndex) {
             if(i-temp.length()-1 >= 0 && line[i-temp.length()-1] == '&') {
                 temp1 = temp + "_out";
                 struct node* actual_out_node = new node(number, temp + " = &" + temp1);
+                actual_out_node->parent.push_back(temp_node);
                 variable_name_to_nodes[temp].push_back(actual_out_node);
                 (actual_out_node->used).insert(temp1);
                 (actual_out_node->defined).insert(temp);
@@ -344,7 +395,7 @@ void process_function_call(string line, string number, int currentIndex) {
             //     temp_node->parent.push_back(v[j]);
             // }
         }
-        variable_count++;
+        // variable_count++;
     }
     // to find name of function
     pair<int, string> p = find_token(0, line);
@@ -354,16 +405,16 @@ void process_function_call(string line, string number, int currentIndex) {
     vector<struct node*> v1 = function_map[function_name]->formal_in_nodes;
     vector<struct node*> v2 = temp_node->actual_in_nodes;
     for(int i=0;i<v1.size();i++) {
-        v1[i]->parametere_edge = v2[i];
+        v1[i]->parametere_in_edge = v2[i];
     }
     v1 = function_map[function_name]->formal_out_nodes;
     v2 = temp_node->actual_out_nodes;
     for(int i=0;i<v1.size();i++) {
-        v2[i]->parametere_edge = v1[i];
+        v2[i]->parametere_out_edge = v1[i];
     }
 
     // for calling edge
-    function_map[function_name]->parametere_edge = temp_node;
+    function_map[function_name]->calling_edge = temp_node;
 
     // for transitive edge
     if(temp_node->actual_out_nodes.size() > 0) {
@@ -388,6 +439,7 @@ void process_function_definition(string line, string number, int currentIndex) {
         } else {
             string temp1 = temp + "_in";
             struct node* formal_in_node = new node(number, temp + " = " + temp1);
+            formal_in_node->parent.push_back(temp_node);
             variable_name_to_nodes[temp].push_back(formal_in_node);
             (formal_in_node->used).insert(temp1);
             (formal_in_node->defined).insert(temp);
@@ -397,6 +449,7 @@ void process_function_definition(string line, string number, int currentIndex) {
             if(i-temp.length()-1 >= 0 && line[i-temp.length()-1] == '*') {
                 temp1 = temp + "_out";
                 struct node* formal_out_node = new node(number, temp1 + " = *" + temp);
+                formal_out_node->parent.push_back(temp_node);
                 variable_name_to_nodes[temp1].push_back(formal_out_node);
                 (formal_out_node->used).insert(temp1);
                 (formal_out_node->defined).insert(temp1);
@@ -409,7 +462,7 @@ void process_function_definition(string line, string number, int currentIndex) {
             // }
         }
     }
-    
+
     // to find name of function
     pair<int, string> p = find_token(0, line);
     p = find_token(p.first, line);
@@ -585,20 +638,21 @@ void find_trace() {
 
 bool cmp(string a, string b) {
     string temp1, temp2;
-    vector<string> a_temp, b_temp;
+    vector<int> a_temp, b_temp;
     stringstream temp1_line(a), temp2_line(b);
     while(getline(temp1_line, temp1, '_')) {
-        a_temp.push_back(temp1);
+        a_temp.push_back(stoi(temp1));
     }
     while(getline(temp2_line, temp2, '_')) {
-        b_temp.push_back(temp2);
+        b_temp.push_back(stoi(temp2));
     }
     if(a_temp.size() > 1 && b_temp.size() > 1 && a_temp[1] < b_temp[1])
         return 1;
     if(a_temp.size() > 1 && b_temp.size() > 1 && a_temp[1] > b_temp[1])
         return 0;
-    if(a_temp[0] < b_temp[0])
+    if(a_temp[0] < b_temp[0]) {
         return 1;
+    }
     return 0;
 }
 
@@ -617,25 +671,102 @@ void show_output(string line_number, string variable_name) {
     //     cout<<endl;
     // }
     // cout<<temp_node->mark<<" "<<temp_node->line_number<<endl;
-    unordered_set<string> ans; 
-    queue<string> q;
-    q.push(line_number);
+
+    unordered_set<struct node*> ans; 
+    queue<struct node*> q;
+
+    // 1st phase
+    q.push(temp_node);
     while(!q.empty()) {
-        string curr = q.front();
+        struct node* curr = q.front();
         ans.insert(curr);
         q.pop();
         // cout<<curr<<" output\n";
-        vector<struct node*> v = code[curr]->parent;
+        vector<struct node*> v = curr->parent;
+        
+        //to find control and data dependent nodes
         for(int i=0;i<v.size();i++) {
-            if(v[i]->mark && ans.find(v[i]->line_number) == ans.end()) {
-                // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
-                q.push(v[i]->line_number);
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
+            // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
+            if(ans.find(v[i]) == ans.end()) {
+                q.push(v[i]);
+            }
+        }
+
+        // to find parameter in nodes
+        if(curr->parametere_in_edge != NULL && ans.find(curr->parametere_in_edge) == ans.end()) {
+            // cout<<curr->statement<<" -> "<<curr->parametere_in_edge->statement<<" show output parameter"<<endl;
+            q.push(curr->parametere_in_edge);
+        }
+
+        // to find calling nodes
+        if(curr->calling_edge != NULL && ans.find(curr->calling_edge) == ans.end()) {
+            // cout<<curr->statement<<" -> "<<curr->calling_edge->statement<<" show output calling"<<endl;
+            q.push(curr->calling_edge);
+        }
+
+        // to find transitive dependent nodes
+        v = curr->transitive_edge;
+        for(int i=0;i<v.size();i++) {
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
+            if(ans.find(v[i]) == ans.end()) {
+                q.push(v[i]);
             }
         }
     }
 
-    vector<string> ans_temp;
+    // cout<<"1st phase complete\n";
+
+    // 2nd phase 
+    // add all visited nodes
     for(auto it:ans) {
+        q.push(it);
+    }
+
+    while(!q.empty()) {
+        struct node* curr = q.front();
+        q.pop();
+        // cout<<curr<<" output\n";
+        vector<struct node*> v = curr->parent;
+        
+        //to find control and data dependent nodes
+        for(int i=0;i<v.size();i++) {
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
+            // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
+            if(ans.find(v[i]) == ans.end()) {
+                ans.insert(v[i]);
+                q.push(v[i]);
+            }
+        }
+
+        // to find parameter out nodes
+
+        if(curr->parametere_out_edge != NULL && ans.find(curr->parametere_out_edge) == ans.end()) {
+            // cout<<curr->statement<<" -> "<<curr->parametere_out_edge->statement<<" show output parameter"<<endl;
+            ans.insert(curr->parametere_out_edge);
+            q.push(curr->parametere_out_edge);
+        }
+
+        // to find transitive dependent nodes
+        v = curr->transitive_edge;
+        for(int i=0;i<v.size();i++) {
+            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
+            if(ans.find(v[i]) == ans.end()) {
+                ans.insert(v[i]);
+                q.push(v[i]);
+            }
+        }
+    }
+
+    unordered_set<string> temp_line_numbers;
+
+    for(auto it:ans) {
+        // cout<<it->line_number<<" : "<<it->statement<<endl;
+        temp_line_numbers.insert(it->line_number);
+    }
+
+    vector<string> ans_temp;
+    for(auto it:temp_line_numbers) {
         ans_temp.push_back(it);
     }
     sort(ans_temp.begin(), ans_temp.end(), cmp);
