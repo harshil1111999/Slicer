@@ -27,7 +27,10 @@ vector<string> source_code; // to find out line by line_number directly
 vector<int> conditional_statements; // to keep track of hierarchy of if else statements
 bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_flag = 0;
 bool replicate = 0; // for to check it is only parallel, for construct
+bool replication_in_progress = 0; // to mark replication is start or not
 bool in_thread = 0; // for to create different variable scope for different threads
+string line_number_from_replicate;
+void process(string line, string number);
 
 struct node {
     vector<struct node*> parent; // contains control, interference and data dependences
@@ -258,11 +261,13 @@ void process_while(string line, int currentIndex, string number) {
 
 void process_if(string line, int currentIndex, string number) {
     int i = currentIndex;
-    struct node* temp_node = new node(number, line);
-    if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
-        control_dependence.pop();
+    struct node* temp_node;
+    if (code.find(number) != code.end()) {
+        temp_node = code[number];
+    } else {
+        temp_node = new node(number, line);
     }
+    temp_node->parent.push_back(control_dependence.top());
     // control_dependence.push(temp_node);
     while (i < line.length()) {
         pair<int, string> token = find_token(i, line);
@@ -306,6 +311,8 @@ void process_else(string line, int currentIndex, string number) {
         string temp = token.second;
 
         if (temp == "if") {
+            struct node* temp_node = new node(number, line);
+            code[number] = temp_node;
             process_if(line, i, number);
             return;
         }
@@ -313,7 +320,7 @@ void process_else(string line, int currentIndex, string number) {
     struct node* temp_node = new node(number, line);
     if (!control_dependence.empty()) {
         temp_node->parent.push_back(control_dependence.top());
-        control_dependence.pop();
+        // control_dependence.pop();
     }
     // control_dependence.push(temp_node);
     code[number] = temp_node;
@@ -698,11 +705,11 @@ void process_return(string line, int currentIndex, string number) {
             // }
         }
     }
+
     if (!control_dependence.empty()) {
         temp_node->parent.push_back(control_dependence.top());
     }
     code[number] = temp_node;
-
     return_statements[control_dependence.top()] = temp_node;
 
     // to set data depenedence for formal out node
@@ -756,6 +763,16 @@ void find_interference_edges() {
     }
 }
 
+void clone_section(string number) {
+    replication_in_progress = 1;
+    int low = stoi(line_number_from_replicate) + 1;
+    int high = stoi(number);
+    for(int i=low;i<high;i++) {
+        process(source_code[i], to_string(i) + "#1");
+    }
+    replication_in_progress = 0;
+}
+
 void process_pragma(string line, int currentIndex, string number) {
     in_thread = 1;
     int i = currentIndex;
@@ -800,6 +817,7 @@ void process_pragma(string line, int currentIndex, string number) {
         }
         if (temp == "parallel" || temp == "for") {
             replicate = 1;
+            line_number_from_replicate = number;
         }
         else if (temp == "sections" || temp == "section") {
             replicate = 0;
@@ -837,6 +855,10 @@ void process_pragma(string line, int currentIndex, string number) {
                 temp_variable_name_to_nodes_defined.clear();
                 threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
                 temp_variable_name_to_nodes_used.clear();
+            }
+
+            if(replicate) {
+                clone_section(number);
             }
 
             find_interference_edges();
@@ -916,6 +938,9 @@ void process(string line, string number) {
                 // getline(temp2_line, temp3, '_');
                 // string temp4 = to_string(stoi(temp2) - 1) + '_' + temp3;
                 string temp4 = to_string(stoi(number) - 1);
+                if(replication_in_progress) {
+                    temp4 += "#1";
+                }
                 if (p.second == "while")
                     while_loop_flag = 1;
                 else {
@@ -943,17 +968,27 @@ void process(string line, string number) {
                     // getline(temp2_line, temp3, '_');
                     // string temp = to_string(stoi(temp2) - 1) + "_" + temp3;
                     string temp = to_string(stoi(number) - 1);
+                    if(replication_in_progress) {
+                        temp += "#1";
+                    }
                     control_dependence.push(code[temp]);
                 }
                 else {
                     // string temp = to_string(stoi(temp2) - 1);
                     string temp = to_string(stoi(number) - 1);
+                    if(replication_in_progress) {
+                        temp += "#1";
+                    }
                     control_dependence.push(code[temp]);
                 }
             }
             else {
                 // control_dependence.push(code[to_string(stoi(temp2) - 1)]);
-                control_dependence.push(code[to_string(stoi(number) - 1)]);
+                string temp = to_string(stoi(number) - 1);
+                if(replication_in_progress) {
+                    temp += "#1";
+                }
+                control_dependence.push(code[temp]);
             }
             return;
         }
@@ -1112,7 +1147,7 @@ void show_output(string line_number, string variable_name) {
 
         //to find control and data dependent nodes
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
             // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
             if (ans.find(v[i]) == ans.end()) {
                 q.push(v[i]);
@@ -1121,20 +1156,20 @@ void show_output(string line_number, string variable_name) {
 
         // to find parameter in nodes
         if (curr->parametere_in_edge != NULL && ans.find(curr->parametere_in_edge) == ans.end()) {
-            // cout<<curr->statement<<" -> "<<curr->parametere_in_edge->statement<<" show output parameter"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<curr->parametere_in_edge->statement<<" show output parameter"<<endl;
             q.push(curr->parametere_in_edge);
         }
 
         // to find calling nodes
         if (curr->calling_edge != NULL && ans.find(curr->calling_edge) == ans.end()) {
-            // cout<<curr->statement<<" -> "<<curr->calling_edge->statement<<" show output calling"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<curr->calling_edge->statement<<" show output calling"<<endl;
             q.push(curr->calling_edge);
         }
 
         // to find transitive dependent nodes
         v = curr->transitive_edge;
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
             if (ans.find(v[i]) == ans.end()) {
                 q.push(v[i]);
             }
@@ -1143,7 +1178,7 @@ void show_output(string line_number, string variable_name) {
         //affect return edges
         v = curr->affect_return_edge;
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
             if (ans.find(v[i]) == ans.end()) {
                 q.push(v[i]);
             }
@@ -1166,7 +1201,7 @@ void show_output(string line_number, string variable_name) {
 
         //to find control and data dependent nodes
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
             // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
             if (ans.find(v[i]) == ans.end()) {
                 ans.insert(v[i]);
@@ -1176,7 +1211,7 @@ void show_output(string line_number, string variable_name) {
 
         // to find parameter out nodes
         if (curr->parametere_out_edge != NULL && ans.find(curr->parametere_out_edge) == ans.end()) {
-            // cout<<curr->statement<<" -> "<<curr->parametere_out_edge->statement<<" show output parameter"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<curr->parametere_out_edge->statement<<" show output parameter"<<endl;
             ans.insert(curr->parametere_out_edge);
             q.push(curr->parametere_out_edge);
         }
@@ -1184,7 +1219,7 @@ void show_output(string line_number, string variable_name) {
         // to find transitive dependent nodes
         v = curr->transitive_edge;
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
             if (ans.find(v[i]) == ans.end()) {
                 ans.insert(v[i]);
                 q.push(v[i]);
@@ -1194,7 +1229,7 @@ void show_output(string line_number, string variable_name) {
         // affect return nodes
         v = curr->affect_return_edge;
         for (int i = 0; i < v.size(); i++) {
-            // cout<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
             if (ans.find(v[i]) == ans.end()) {
                 ans.insert(v[i]);
                 q.push(v[i]);
@@ -1203,7 +1238,7 @@ void show_output(string line_number, string variable_name) {
 
         // return link edge
         if (curr->return_link != NULL && ans.find(curr->return_link) == ans.end()) {
-            // cout<<curr->statement<<" -> "<<curr->return_link->statement<<" show output return link"<<endl;
+            // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<curr->return_link->statement<<" show output return link"<<endl;
             ans.insert(curr->return_link);
             q.push(curr->return_link);
         }
@@ -1220,6 +1255,7 @@ void show_output(string line_number, string variable_name) {
     for (auto it : temp_line_numbers) {
         ans_temp.push_back(it);
     }
+
     sort(ans_temp.begin(), ans_temp.end(), cmp);
 
     for (int j = 0; j < ans_temp.size(); j++) {
@@ -1552,6 +1588,5 @@ int main() {
     // output.close();
 
     // find_trace();
-
     show_output(error_line_number, variable_name);
 }
