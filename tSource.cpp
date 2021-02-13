@@ -5,20 +5,28 @@ using namespace std;
 int fun(int x, int *y)
 {
     int k = 10;
-#pragma omp parallel sections 
-#pragma omp section
-    k = *y + k;
-#pragma omp section
-    if(x > *y) 
+    int c = 10;
+    #pragma omp parallel
     {
-        k = x + *y;
-        *y = x + *y;
+        if(x > *y) 
+        {
+            k = x + *y;
+            *y = x + *y;
+        }
+        else
+        {
+            *y = x * *y;
+        }
     }
-    else
+    #pragma omp parallel single
     {
-        *y = x * *y;
+        int i;
+        for(i=0;i<10;i=i+1)
+        {
+            k = k + i;
+        }
+        x = x + k;
     }
-#pragma omp end parallel
     return x;
 }
 
