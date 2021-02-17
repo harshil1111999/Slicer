@@ -19,6 +19,7 @@ unordered_map<struct node*, struct node*> return_statements;
 unordered_set<string> datatypes; // for inbuilt datatypes
 vector<unordered_map<string, vector<struct node*>>> threads_variable_name_to_nodes_defined, threads_variable_name_to_nodes_used; // different scope for different threads
 unordered_set<string> shared_variables;
+unordered_set<string> thread_private_variables; // to keep track of thread_private variables
 stack<struct node*> control_dependence;
 stack<string> control_dependence2; // for to create trace keep track of scope
 string file_opening_line = "ofstream result;\nresult.open(\"result.txt\", ios::trunc);\nresult<<";
@@ -28,15 +29,22 @@ vector<int> conditional_statements; // to keep track of hierarchy of if else sta
 bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_flag = 0;
 bool replication_in_progress = 0; // to mark replication is start or not
 void process(string line, string number);
+bool in_thread = 0;
+int parallel_bracket_count = 0;
+int thread_count = 0;
+bool has_section = 0;
+bool has_single_or_master = 0;
+vector<string> must_adding_lines;
 
 struct node {
     vector<struct node*> parent; // contains control, interference and data dependences
+    vector<struct node*> parallel_thread_nodes; // after completing parallel region it contains refernce to nodes with same name and last definition from another thread
     struct node* parametere_in_edge, * parametere_out_edge, * calling_edge; // parameter IN/OUT edge
     struct node* return_link;
     vector<struct node*> transitive_edge, affect_return_edge, interference_edge;
     bool mark; // for dynamic dependence graph
     bool flag; // for transitive edge and affect return edge
-    bool in_thread; // for to create different variable scope for different threads
+    // bool in_thread; // for to create different variable scope for different threads
     bool replicate; // for to check it is only parallel, for construct
     string line_number;
     string statement;
@@ -51,7 +59,7 @@ struct node {
 
         flag = false;
         mark = false;
-        in_thread = false;
+        // in_thread = false;
         replicate = false;
         line_number = number;
         statement = line;
@@ -74,6 +82,7 @@ void keywords_init() {
     datatypes.insert("double");
     datatypes.insert("string");
     datatypes.insert("void");
+    datatypes.insert("static");
 }
 
 //parse words from the line
@@ -127,7 +136,7 @@ void process_definition(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
 
@@ -142,8 +151,6 @@ void process_definition(string line, int currentIndex, string number) {
             vector<struct node*> v;
             if (temp_variable_name_to_nodes_defined.find(temp) != temp_variable_name_to_nodes_defined.end()) {
                 v = temp_variable_name_to_nodes_defined[temp];
-                if(number == "61")
-                    cout<<temp<<"****************************************************"<<endl;
             }
             else {
                 v = variable_name_to_nodes[temp];
@@ -162,7 +169,7 @@ void process_definition(string line, int currentIndex, string number) {
     if (!control_dependence.empty()) {
         temp_node->parent.push_back(control_dependence.top());
     }
-    if (control_dependence.top()->in_thread) {
+    if (in_thread) {
         temp_variable_name_to_nodes_defined[variable_name].push_back(temp_node);
     }
     else {
@@ -197,7 +204,7 @@ void process_for(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
@@ -236,7 +243,7 @@ void process_while(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
@@ -282,7 +289,7 @@ void process_if(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
@@ -347,7 +354,7 @@ void process_cin(string line, int currentIndex, string number) {
         }
         (temp_node->defined).insert(temp);
         vector<struct node*> v;
-        if (control_dependence.top()->in_thread) {
+        if (in_thread) {
             temp_variable_name_to_nodes_defined[temp].push_back(temp_node);
         }
         else {
@@ -369,7 +376,7 @@ void process_cout(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'' || temp == "endl") {
@@ -524,7 +531,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
             struct node* actual_in_node = new node(number, temp1 + " = " + temp);
             actual_in_node->parent.push_back(temp_node);
 
-            if(control_dependence.top()->in_thread) {
+            if(in_thread) {
                 temp_variable_name_to_nodes_defined[temp1].push_back(actual_in_node);
                 temp_variable_name_to_nodes_used[temp].push_back(temp_node);
             } else {
@@ -540,7 +547,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
                 struct node* actual_out_node = new node(number, temp + " = &" + temp1);
                 actual_out_node->parent.push_back(temp_node);
                 
-                if(control_dependence.top()->in_thread) {
+                if(in_thread) {
                     temp_variable_name_to_nodes_defined[temp].push_back(actual_out_node);
                     temp_variable_name_to_nodes_used[temp1].push_back(temp_node);
                 } else {
@@ -613,7 +620,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
         while (i >= 0 && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90))) {
             temp = line[i--] + temp;
         }
-        if(control_dependence.top()->in_thread) {
+        if(in_thread) {
             temp_variable_name_to_nodes_defined[temp].push_back(temp_node);
         } else {
             variable_name_to_nodes[temp].push_back(temp_node);
@@ -698,7 +705,7 @@ void process_return(string line, int currentIndex, string number) {
 
         i = token.first;
         string temp = token.second;
-        if (control_dependence.top()->in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
+        if (in_thread && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
             temp_variable_name_to_nodes_used[temp].push_back(temp_node);
         }
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'' || temp == "endl") {
@@ -756,7 +763,9 @@ void process_return(string line, int currentIndex, string number) {
 
 void find_shared_variables() {
     for (auto it = variable_name_to_nodes.begin(); it != variable_name_to_nodes.end();it++) {
-        shared_variables.insert(it->first);
+        if (thread_private_variables.find(it->first) == thread_private_variables.end()) {
+            shared_variables.insert(it->first);
+        }
     }
 }
 
@@ -784,10 +793,15 @@ void find_interference_edges() {
 
 void clone_section(string number) {
     replication_in_progress = 1;
-    int low = stoi(control_dependence.top()->line_number) + 2;
-    int high = stoi(number);
+    stringstream ss1(control_dependence.top()->line_number);
+    stringstream ss2(number);
+    string temp1,temp2;
+    getline(ss1, temp1, '#');
+    getline(ss2, temp2, '#');
+    int low = stoi(temp1) + 2;
+    int high = stoi(temp2);
     for(int i=low;i<high;i++) {
-        process(source_code[i], to_string(i) + "#1");
+        process(source_code[i], to_string(i));
     }
     replication_in_progress = 0;
 }
@@ -795,7 +809,7 @@ void clone_section(string number) {
 void process_pragma(string line, int currentIndex, string number) {
     int i = currentIndex;
     struct node* temp_node = new node(number, line);
-    temp_node->in_thread = true;
+    // temp_node->in_thread = true;
     pair<int, string> token = find_token(i, line);
     i = token.first;
     while (i < line.length()) {
@@ -806,12 +820,14 @@ void process_pragma(string line, int currentIndex, string number) {
             find_shared_variables();
         }
         if (temp == "section") {
+            has_section = 1;
             // to remove eralier section from control dependence
             string temp = control_dependence.top()->statement;
             pair<int,string> p = find_token(0, temp);
             p = find_token(p.first, temp);
             p = find_token(p.first, temp);
             if(p.second == "section") {
+                thread_count++;
                 control_dependence.pop();
             }
 
@@ -838,6 +854,9 @@ void process_pragma(string line, int currentIndex, string number) {
             temp_node->replicate = 1;
         }
         else if (temp == "sections" || temp == "section" || temp == "single" || temp == "master") {
+            if(temp == "single" || temp == "master") {
+                has_single_or_master = 1;
+            }
             temp_node->replicate = 0;
         }
         else if (temp == "shared") {
@@ -863,34 +882,58 @@ void process_pragma(string line, int currentIndex, string number) {
 }
 
 void process(string line, string number) {
+    if(in_thread) {
+        number += "#" + to_string(thread_count);
+    }
     int i = 0;
     pair<int, string> token = find_token(i, line);
     i = token.first;
     string temp = token.second;
+    // cout<<line<<" : "<<number<<" : "<<temp<<endl;
     if (keywords.find(temp) != keywords.end()) {
         switch (keywords[temp]) {
-        case 1:
+        case 0:
             process_for(line, i, number);
             break;
-        case 2:
+        case 1:
             process_while(line, i, number);
             break;
-        case 3:
+        case 2:
             process_if(line, i, number);
             break;
-        case 4:
+        case 3:
             process_else(line, i, number);
             break;
-        case 5:
+        case 4:
             process_cin(line, i, number);
             break;
-        case 6:
+        case 5:
             process_cout(line, i, number);
             break;
-        case 7:
+        case 6:
             process_return(line, i, number);
             break;
-        case 8:
+        case 7:
+            i = 0;
+            pair<int,string> p;
+            while(i < line.length()) {
+                p = find_token(i, line);
+                i = p.first;
+                if(p.second == "barrier" || p.second == "flush") {
+                    must_adding_lines.push_back(number);
+                }
+                if (p.second == "threadprivate") {
+                    while (i < line.length()) {
+                        token = find_token(i, line);
+                        i = token.first;
+                        if (token.second != "") {
+                            shared_variables.erase(token.second);
+                            thread_private_variables.insert(token.second);
+                        }
+                    }
+                    break;
+                }
+            }
             break;
         }
     }
@@ -904,16 +947,20 @@ void process(string line, string number) {
             temp1 += line[j++];
         }
         if (temp1 == "{") { // to mark enterd into scope
-            // string temp2, temp3;
-            // stringstream temp2_line(number);
-            // getline(temp2_line, temp2, '_');
-            pair<int, string> p = find_token(0, source_code[stoi(number) - 1]);
+            if(in_thread) {
+                parallel_bracket_count++;
+            }
+            string temp2, temp3;
+            stringstream temp2_line(number);
+            getline(temp2_line, temp2, '#');
+            pair<int, string> p = find_token(0, source_code[stoi(temp2) - 1]);
             if (p.second == "while" || p.second == "for") { // to check that it is loop and not if else statement
                 // getline(temp2_line, temp3, '_');
                 // string temp4 = to_string(stoi(temp2) - 1) + '_' + temp3;
-                string temp4 = to_string(stoi(number) - 1);
-                if(replication_in_progress) {
-                    temp4 += "#1";
+                string temp4 = to_string(stoi(temp2) - 1);
+                if(in_thread) {
+                    getline(temp2_line, temp3, '#');
+                    temp4 += "#" + temp3;
                 }
                 if (p.second == "while")
                     while_loop_flag = 1;
@@ -935,55 +982,78 @@ void process(string line, string number) {
                 control_dependence.push(temp_node);
             }
             else if (p.second == "if" || p.second == "else") {
-                if (for_loop_flag || while_loop_flag) {
-                    // string temp2, temp3;
-                    // stringstream temp2_line(number);
-                    // getline(temp2_line, temp2, '_');
-                    // getline(temp2_line, temp3, '_');
-                    // string temp = to_string(stoi(temp2) - 1) + "_" + temp3;
-                    string temp = to_string(stoi(number) - 1);
-                    if(replication_in_progress) {
-                        temp += "#1";
-                    }
-                    control_dependence.push(code[temp]);
+                string temp4 = to_string(stoi(temp2) - 1);
+                if(in_thread) {
+                    getline(temp2_line, temp3, '#');
+                    temp4 += "#" + temp3;
                 }
-                else {
-                    // string temp = to_string(stoi(temp2) - 1);
-                    string temp = to_string(stoi(number) - 1);
-                    if(replication_in_progress) {
-                        temp += "#1";
-                    }
-                    control_dependence.push(code[temp]);
-                }
+                control_dependence.push(code[temp4]);
+                // if (for_loop_flag || while_loop_flag) {
+                //     // string temp2, temp3;
+                //     // stringstream temp2_line(number);
+                //     // getline(temp2_line, temp2, '_');
+                //     // getline(temp2_line, temp3, '_');
+                //     // string temp = to_string(stoi(temp2) - 1) + "_" + temp3;
+                //     string temp4 = to_string(stoi(temp2) - 1);
+                //     if(in_thread) {
+                //         getline(temp2_line, temp3, '#');
+                //         temp4 += temp3;
+                //     }
+                //     control_dependence.push(code[temp4]);
+                // }
+                // else {
+                //     // string temp = to_string(stoi(temp2) - 1);
+                //     string temp4 = to_string(stoi(temp2) - 1);
+                //     if(in_thread) {
+                //         getline(temp2_line, temp3, '#');
+                //         temp4 += temp3;
+                //     }
+                //     control_dependence.push(code[temp4]);
+                // }
             }
             else if (p.second == "pragma") {
-                string temp = to_string(stoi(number) - 1);
-                if(replication_in_progress) {
-                    temp += "#1";
+                if(!in_thread) {
+                    parallel_bracket_count++;
+                    in_thread = 1;
                 }
-                process_pragma(source_code[stoi(number) - 1], p.first, temp);
-                control_dependence.push(code[temp]);
+                string temp4 = to_string(stoi(temp2) - 1);
+                if(in_thread) {
+                    if(getline(temp2_line, temp3, '#')) {
+                        temp4 += "#" + temp3;
+                    }
+                }
+                process_pragma(source_code[stoi(temp2) - 1], p.first, temp4);
+                control_dependence.push(code[temp4]);
             }
             else {
                 // control_dependence.push(code[to_string(stoi(temp2) - 1)]);
-                string temp = to_string(stoi(number) - 1);
-                if(replication_in_progress) {
-                    temp += "#1";
+                string temp4 = to_string(stoi(temp2) - 1);
+                if(in_thread) {
+                    getline(temp2_line, temp3, '#');
+                    temp4 += "#" + temp3;
                 }
-                control_dependence.push(code[temp]);
+                control_dependence.push(code[temp4]);
             }
-            // cout<<control_dependence.top()->line_number<<" : "<<source_code[stoi(number) - 1]<<" pushed\n";
+            // cout<<control_dependence.top()->line_number<<" : "<<control_dependence.top()->statement<<" pushed\n";
             return;
         }
         if (temp1 == "}") {
-
+            if(in_thread) {
+                parallel_bracket_count--;
+            }
             pair<int, string> p = find_token(0, control_dependence.top()->statement);
             if(p.second == "pragma") {
+                if(in_thread && parallel_bracket_count == 0) {
+                    in_thread = 0;
+                }
                 struct node* temp_node = new node(line, number);
+                // cout<<number<<" line reached : "<<temp_variable_name_to_nodes_defined.size()<<endl;
                 // before clearing temp_variable_name_to_node, inserting shared variables into main variable_name_to_node
                 if(!temp_variable_name_to_nodes_defined.empty()) {
                     for(auto it:shared_variables) {
+                        // cout<<it<<" shared variable\n";
                         if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
+                            // cout<<it<<" shared variable inserted\n";
                             vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
                             for(int i=0;i<v.size();i++) {
                                 variable_name_to_nodes[it].push_back(v[i]);
@@ -991,7 +1061,7 @@ void process(string line, string number) {
                         }
                     }
                 }
-
+                
                 if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
                     threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
                     temp_variable_name_to_nodes_defined.clear();
@@ -999,11 +1069,67 @@ void process(string line, string number) {
                     temp_variable_name_to_nodes_used.clear();
                 }
 
-                if(control_dependence.top()->replicate) {
+                if(has_section) {
+                    thread_count++;
+                }
+
+                if(!(has_section || has_single_or_master) && control_dependence.top()->replicate) {
+                    in_thread = 1;
+                    parallel_bracket_count++;
+                    thread_count++;
                     clone_section(number);
+                    thread_count = 0;
+                    parallel_bracket_count--;
+                    in_thread = 0;
+                    if(!temp_variable_name_to_nodes_defined.empty()) {
+                        for(auto it:shared_variables) {
+                            if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
+                                vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
+                                for(int i=0;i<v.size();i++) {
+                                    if (variable_name_to_nodes.find(it) != variable_name_to_nodes.end()) {
+                                        // cout<<it<<" reached\n";
+                                        vector<struct node*> v1 = variable_name_to_nodes[it];
+                                        variable_name_to_nodes[it].push_back(v[i]);
+                                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size()-1]);
+                                        // cout<<v[v.size()-1]->line_number<<" -> "<<v1[v1.size()-1]->line_number<<endl;
+                                    } else {
+                                        variable_name_to_nodes[it].push_back(v[i]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
+                        threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
+                        temp_variable_name_to_nodes_defined.clear();
+                        threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
+                        temp_variable_name_to_nodes_used.clear();
+                    }
+                }
+
+                // for thread_private variables
+                if (thread_private_variables.size() > 0) {
+                    for (auto it : thread_private_variables) {
+                        // cout << it << endl;
+                        if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
+                            // cout << "in thread private variable : " << number << endl;
+                            vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
+                            for (int i = 0; i < v1.size(); i++) {
+                                variable_name_to_nodes[it].push_back(v1[i]);
+                            }
+                        }
+                        else {
+                            cout << number <<" error in }\n";
+                        }
+                    }
                 }
 
                 find_interference_edges();
+                
+                if(!in_thread) {
+                    thread_count = 0;
+                }
 
                 // struct node* last_node = NULL;
                 // while(!control_dependence.empty()) {
@@ -1024,6 +1150,7 @@ void process(string line, string number) {
                 control_dependence.pop();
                 p = find_token(0, control_dependence.top()->statement);
                 if(p.second != "pragma") {
+                    thread_private_variables.clear();
                     threads_variable_name_to_nodes_defined.clear();
                     threads_variable_name_to_nodes_used.clear();
                     temp_variable_name_to_nodes_defined.clear();
@@ -1200,6 +1327,20 @@ void show_output(string line_number, vector<string> variable_names) {
     // 1st phase
     while (!q.empty()) {
         struct node* curr = q.front();
+
+        // for same line but from different threads !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! be aware of this
+        vector<struct node*> v1 = curr->parallel_thread_nodes;
+        for (int i = 0; i < v1.size(); i++) {
+            string s1, s2;
+            stringstream ss1(v1[i]->line_number);
+            stringstream ss2(curr->line_number);
+            getline(ss1, s1, '#');
+            getline(ss2, s2, '#');
+            if (s1 == s2) {
+                q.push(v1[i]);
+            }
+        }
+
         ans.insert(curr);
         q.pop();
         // cout<<curr<<" output\n";
@@ -1256,6 +1397,21 @@ void show_output(string line_number, vector<string> variable_names) {
     while (!q.empty()) {
         struct node* curr = q.front();
         q.pop();
+
+        // for same line but from different threads !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! be aware of this
+        vector<struct node*> v1 = curr->parallel_thread_nodes;
+        for (int i = 0; i < v1.size(); i++) {
+            string s1, s2;
+            stringstream ss1(v1[i]->line_number);
+            stringstream ss2(curr->line_number);
+            getline(ss1, s1, '#');
+            getline(ss2, s2, '#');
+            if (s1 == s2) {
+                q.push(v1[i]);
+                ans.insert(v1[i]);
+            }
+        }
+
         // cout<<curr<<" output\n";
         vector<struct node*> v = curr->parent;
 
@@ -1322,6 +1478,10 @@ void show_output(string line_number, vector<string> variable_names) {
         // }
     }
 
+    for(int i=0;i<must_adding_lines.size();i++) {
+        temp_line_numbers.insert(must_adding_lines[i]);
+    }
+
     vector<string> ans_temp;
     for (auto it : temp_line_numbers) {
         ans_temp.push_back(it);
@@ -1330,7 +1490,14 @@ void show_output(string line_number, vector<string> variable_names) {
     sort(ans_temp.begin(), ans_temp.end(), cmp);
 
     for (int j = 0; j < ans_temp.size(); j++) {
-        cout << ans_temp[j] << " : " << code[ans_temp[j]]->statement << "\n";
+        if(code.find(ans_temp[j]) != code.end()) {
+            cout << ans_temp[j] << " : " << code[ans_temp[j]]->statement << "\n";
+        } else {
+            stringstream ss(ans_temp[j]);
+            string s1;
+            getline(ss, s1, '#');
+            cout << ans_temp[j] << " : " << source_code[stoi(s1)] << "\n";
+        }
     }
 }
 
@@ -1659,7 +1826,9 @@ int main() {
         //    break;
         //}
         // cout<<line_count<<" -> "<<line<<endl;
+        // cout<<line_count<<" : "<<temp_variable_name_to_nodes_defined.size()<<" : "<<temp_variable_name_to_nodes_used.size()<<endl;
         process(line, to_string(line_count));
+        // cout<<line_count<<" : "<<temp_variable_name_to_nodes_defined.size()<<" : "<<temp_variable_name_to_nodes_used.size()<<endl;
         // cout<<line<<endl;
     }
     fin.close();

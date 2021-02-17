@@ -21,6 +21,7 @@ unordered_set<string> datatypes; // for inbuilt datatypes
 vector<unordered_map<string, vector<struct node*>>> threads_variable_name_to_nodes_defined, threads_variable_name_to_nodes_used; // different scope for different threads
 vector < stack<struct node*> > thread_control_dependence; // in case of parallel computation to keep track of scopes for different threads
 unordered_set<string> shared_variables; // to keep track of shared variables between threads
+unordered_set<string> thread_private_variables; // to keep track of thread_private variables
 stack<struct node*> control_dependence; // to keep track of scope for main thread for without parallel compution code
 stack<string> control_dependence2; // for to create trace keep track of scope
 string file_opening_line = "ofstream result;\nresult.open(\"result.txt\", ios::app);\nresult<<";
@@ -32,6 +33,8 @@ int in_parallel_flag = 0; // to check current line is under parallel computing
 int count_for_sections = 0; // for to check when closing bracket of sections construct comes
 bool has_sections = 0; // to mark that code contains sections construct
 vector<string> must_adding_lines;
+bool has_critical = 0, has_atomic = 0;
+int brackets = 0;
 
 void process(string line, string number);
 
@@ -79,6 +82,7 @@ void keywords_init() {
     datatypes.insert("double");
     datatypes.insert("string");
     datatypes.insert("void");
+    datatypes.insert("static");
 }
 
 //parse words from the line
@@ -112,6 +116,7 @@ void process_definition(string line, int currentIndex, string number) {
     }
 
     int i = currentIndex;
+    string line1 = line;
     line = line.substr(i);
     vector<string> tokens;
     string temp;
@@ -125,7 +130,7 @@ void process_definition(string line, int currentIndex, string number) {
 
     struct node* temp_node;
     if (code.find(number) == code.end()) {
-        temp_node = new node(number, line);
+        temp_node = new node(number, line1);
     }
     else {
         temp_node = code[number];
@@ -138,6 +143,7 @@ void process_definition(string line, int currentIndex, string number) {
         if (datatypes.find(token.second) == datatypes.end() && token.second.length() > 0)
             variable_name = token.second;
     }
+
     (temp_node->defined).insert(variable_name);
 
     i = 0;
@@ -195,6 +201,7 @@ void process_definition(string line, int currentIndex, string number) {
             unordered_map < string, vector<struct node*>> mp;
             threads_variable_name_to_nodes_defined.push_back(mp);
         }
+
         threads_variable_name_to_nodes_defined[thread_number][variable_name].push_back(temp_node);
     }
     else {
@@ -879,7 +886,9 @@ void process_return(string line, int currentIndex, string number) {
 
 void find_shared_variables() {
     for (auto it = variable_name_to_nodes.begin(); it != variable_name_to_nodes.end(); it++) {
-        shared_variables.insert(it->first);
+        if (thread_private_variables.find(it->first) == thread_private_variables.end()) {
+            shared_variables.insert(it->first);
+        }
     }
 }
 
@@ -1019,6 +1028,22 @@ void process(string line, string number) {
             process_return(line, i, number);
             break;
         case 7:
+            while (i < line.length()) {
+                token = find_token(i, line);
+                i = token.first;
+                temp = token.second; 
+                if (temp == "threadprivate") {
+                    while (i < line.length()) {
+                        token = find_token(i, line);
+                        i = token.first;
+                        if (token.second != "") {
+                            shared_variables.erase(token.second);
+                            thread_private_variables.insert(token.second);
+                        }
+                    }
+                    break;
+                }
+            }
             break;
         }
     }
@@ -1222,21 +1247,17 @@ void process(string line, string number) {
                     // cout << control_dependence.top()->line_number << " : " << control_dependence.top()->statement << " poped\n";
                     control_dependence.pop();
                 }
-                
-                parent = control_dependence.top();
-                if (in_parallel_flag) {
-                    stringstream ss1(number);
-                    string temp1;
-                    getline(ss1, temp1, '@');
-                    getline(ss1, temp1, '@');
-                    int num = stoi(temp1);
-                    if (thread_control_dependence.size() >= num + 1 && !thread_control_dependence[num].empty()) {
-                        parent = thread_control_dependence[num].top();
+
+                bool check = 1;
+                for (int i = 0; i < thread_control_dependence.size(); i++) {
+                    if (!thread_control_dependence[i].empty()) {
+                        check = 0;
+                        break;
                     }
                 }
 
-                p = find_token(0, parent->statement);
-                if (p.second != "pragma") {
+                if (check) {
+                    // cout << "in check " << number << endl;
                     for (int i = 0; i < threads_variable_name_to_nodes_defined.size() ; i++) {
                         for (auto it : shared_variables) {
                             if (threads_variable_name_to_nodes_defined[i].find(it) != threads_variable_name_to_nodes_defined[i].end()) {
@@ -1256,8 +1277,26 @@ void process(string line, string number) {
                         }
                     }
 
+                    // for thread_private variables
+                    if (thread_private_variables.size() > 0) {
+                        for (auto it : thread_private_variables) {
+                            // cout << it << endl;
+                            if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
+                                // cout << "in thread private variable : " << number << endl;
+                                vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
+                                for (int i = 0; i < v1.size(); i++) {
+                                    variable_name_to_nodes[it].push_back(v1[i]);
+                                }
+                            }
+                            else {
+                                cout << number <<" error in }\n";
+                            }
+                        }
+                    }
+
                     find_interference_edges();
 
+                    thread_private_variables.clear();
                     threads_variable_name_to_nodes_defined.clear();
                     threads_variable_name_to_nodes_used.clear();
                 }
@@ -1383,11 +1422,12 @@ bool cmp(string a, string b) {
      return 0;
 }
 
-void find_trace() {
+void find_trace(string line_number) {
     string s = "g++ -o output.exe -fopenmp output.cpp";
     const char* command = s.c_str();
     system(command);
     system("output.exe");
+
     ifstream fin;
     fin.open("result.txt");
     string temp;
@@ -1406,7 +1446,11 @@ void find_trace() {
         // cout << lines[i]<<" : "<< source_code[stoi(temp2)] << "in find trace\n";
         process(source_code[stoi(temp2)], lines[i]);
         // cout << lines[i] << " : " << source_code[stoi(temp2)] << "in find trace\n";
-        if (code.find(lines[i]) != code.end()) {
+        stringstream ss1(lines[i]), ss2(line_number);
+        string num1, num2;
+        getline(ss1, num1, '@');
+        getline(ss2, num2, '@');
+        if (cmp(num1, num2) && code.find(lines[i]) != code.end()) {
             code[lines[i]]->mark = true;
         }
     }
@@ -1613,26 +1657,42 @@ int can_insert(string line, int number) {
 
     p = find_token(0, line);
     if (p.second == "pragma" && in_parallel_flag) {
-        p = find_token(p.first, line);
-        p = find_token(p.first, line);
-        if (p.second == "section") {
-            return 0;
+        while (l < line.length()) {
+            p = find_token(l, line);
+            l = p.first;
+            if (p.second == "section") {
+                return 0;
+            }
         }
         return 9;
+    }
+    else if (p.second == "pragma") {
+        l = 0;
+        // cout << "error : " << line << " : " << number << endl;
+        while (l < line.length()) {
+            p = find_token(l, line);
+            l = p.first;
+            if (p.second == "threadprivate") {
+                return 9;
+            }
+        }
     }
 
     if (i < line.length() && line[i] == '{') {
         if (has_sections) { // increment only if sections construct encountered
             count_for_sections++;
         }
+        if (has_atomic || has_critical) { // increment only if atomic or critical construct encountered
+            brackets++;
+        }
         string temp = source_code[number - 1];
 
-        // to skip processing of sections construct related '}'
+        // to skip processing of sections,barrier,atomic,critical,flush construct related '{'
         l = 0;
         while (l < temp.length()) {
             p = find_token(l, temp);
             l = p.first;
-            if (p.second == "sections") {
+            if (p.second == "sections" || p.second == "atomic" || p.second == "critical") {
                 return 0;
             }
         }
@@ -1688,19 +1748,33 @@ int can_insert(string line, int number) {
         if (has_sections) {
             count_for_sections--;
         }
+        if (has_atomic || has_critical) {
+            brackets--;
+        }
         if (has_sections && count_for_sections == 0) {
             has_sections = 0;
+            return 0;
+        }
+        if ((has_atomic || has_critical) && brackets == 0) {
+            if (has_atomic) {
+                has_atomic = 0;
+            }
+            else {
+                has_critical = 0;
+            }
             return 0;
         }
         return 4;
     }
 
-    while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
+    p = find_token(0, line);
+    temp = p.second;
+    /*while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
         temp += line[i++];
-    }
+    }*/
 
-    if (line[0] == '#' || temp == "using") {
-        pair<int,string> p1 = find_token(i, line);
+    if (temp == "include" || temp == "using") {
+        pair<int,string> p1 = find_token(p.first, line);
         pair<int, string> p2 = find_token(p1.first, line);
         if (p1.second == "namespace" && p2.second == "std") {
             return 8;
@@ -1733,6 +1807,7 @@ int can_insert(string line, int number) {
     if (control_dependence2.empty()) {
         return 0;
     }
+    // cout << "error : " << line << " : " << number << endl;
     return 2;
 }
 
@@ -1741,13 +1816,13 @@ int main() {
     source_code.push_back("");
     string line;
     ifstream fin;
-    fin.open("source.cpp");
+    fin.open("Dynamic tSource.cpp");
     ofstream output;
     output.open("output.cpp");
     output << "#include<sstream>\n#include<fstream>\n";
     string error_line_number;
     int num;
-    cout << "Enter line number where you want to find slicer : ";
+    cout << "Enter line number where you wnat to find slice(format in case of loop is [line number]_[iteration number starting at 0]) : ";
     cin >> error_line_number;
     cout << "Enter number of variables : ";
     cin >> num;
@@ -1777,7 +1852,7 @@ int main() {
         // cout << line << endl;
         source_code.push_back(line);
         line_count++;
-        if ((error_in_loop && loop_closed) || (!error_in_loop && line_count > end)) {
+        /*if ((error_in_loop && loop_closed) || (!error_in_loop && line_count > end)) {
             if (!file_closed) {
                 file_closed = 1;
                 output << "result.close();\n";
@@ -1787,7 +1862,7 @@ int main() {
                 break;
             }
             continue;
-        }
+        }*/
         int flag = can_insert(line, line_count);
         pair<int, string> p;
         if (!control_dependence2.empty()) {
@@ -1800,8 +1875,10 @@ int main() {
                 temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\"";
             }
@@ -1809,14 +1886,18 @@ int main() {
                 temp_line = "\"" + to_string(line_count) + "\"";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\"";
             }
             output << "result<<" + temp_line + ";\n";
             if (in_parallel_flag) {
-                output << "}\n";
+                if (!has_atomic && !has_critical) {
+                    output << "}\n";
+                }
             }
             output << line + "\n";
         }
@@ -1828,13 +1909,17 @@ int main() {
                 temp_line = for_main_file_opening_line + "\"" + to_string(line_count - 1) + "#\";\nresult<<\"" + to_string(line_count) + "\"";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\";\n";
                 output << temp_line;
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
             }
             else if (p.second == "other_function") {
@@ -1842,19 +1927,24 @@ int main() {
                 temp_line = file_opening_line + "\"" + to_string(line_count - 1) + "#\";\nresult<<\"" + to_string(line_count) + "\"";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\";\n";
                 output << temp_line;
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
             }
             else if (p.second == "pragma") {
-
-                output << "#pragma omp critical\n";
-                output << "{\n";
+                if (!has_atomic && !has_critical) {
+                    output << "#pragma omp critical\n";
+                    output << "{\n";
+                }
 
                 // in case of sections to write critical construct for atomic write in file which is not allowed to write saparately in sections
                 pair<int, string> p = find_token(0, source_code[line_count-1]);
@@ -1865,7 +1955,9 @@ int main() {
                 }
 
                 output << "result<<\"" + to_string(line_count) + "\" << \"@\"<<omp_get_thread_num()<<\"" + "#" + "\";\n";
-                output << "}\n";
+                if (!has_atomic && !has_critical) {
+                    output << "}\n";
+                }
             }
             else if (p.second == "for" || p.second == "while") {
                 string temp_line = "\"" + to_string(line_count-1) + "_\"<<to_string(loop_counter)";
@@ -1873,15 +1965,19 @@ int main() {
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
                     temp_line1 = temp_line1 + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\"";
                 temp_line1 += "<<\"#\"";
                 output << "result<<" + temp_line + ";\n";
                 output << "result<<" + temp_line1 + ";\n";
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
 
                 if (p.second == "for") {
@@ -1899,8 +1995,10 @@ int main() {
                     temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)";
                     if (in_parallel_flag) {
                         temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                        output << "#pragma omp critical\n";
-                        output << "{\n";
+                        if (!has_atomic && !has_critical) {
+                            output << "#pragma omp critical\n";
+                            output << "{\n";
+                        }
                     }
                     temp_line += "<<\"#\"";
                 }
@@ -1908,14 +2006,18 @@ int main() {
                     temp_line = "\"" + to_string(line_count) + "\"";
                     if (in_parallel_flag) {
                         temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                        output << "#pragma omp critical\n";
-                        output << "{\n";
+                        if (!has_atomic && !has_critical) {
+                            output << "#pragma omp critical\n";
+                            output << "{\n";
+                        }
                     }
                     temp_line += "<<\"#\"";
                 }
                 output << "result<<" + temp_line + ";\n";
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
             }
         }
@@ -1927,8 +2029,10 @@ int main() {
                     temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)";
                     if (in_parallel_flag) {
                         temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                        output << "#pragma omp critical\n";
-                        output << "{\n";
+                        if (!has_atomic && !has_critical) {
+                            output << "#pragma omp critical\n";
+                            output << "{\n";
+                        }
                     }
                     temp_line += "<<\"#\"";
                 }
@@ -1936,14 +2040,18 @@ int main() {
                     temp_line = "\"" + to_string(line_count) + "\"";
                     if (in_parallel_flag) {
                         temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                        output << "#pragma omp critical\n";
-                        output << "{\n";
+                        if (!has_atomic && !has_critical) {
+                            output << "#pragma omp critical\n";
+                            output << "{\n";
+                        }
                     }
                     temp_line += "<<\"#\"";
                 }
                 output << "result<<" + temp_line + ";\n";
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
                 condition_flag = 0;
             }
@@ -1951,13 +2059,17 @@ int main() {
                 string temp_line = "\"" + to_string(line_count) + "_\"<<to_string(loop_counter)";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
-                    output << "#pragma omp critical\n";
-                    output << "{\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "#pragma omp critical\n";
+                        output << "{\n";
+                    }
                 }
                 temp_line += "<<\"#\"";
                 output << "result<<" + temp_line + ";\n";
                 if (in_parallel_flag) {
-                    output << "}\n";
+                    if (!has_atomic && !has_critical) {
+                        output << "}\n";
+                    }
                 }
                 output << "loop_counter = loop_counter + 1;\n";
                 if (p.second == "for") {
@@ -2032,45 +2144,17 @@ int main() {
             string temp2 = line.substr(j);
 
             //to write into result file
-            output << temp1 + "add_function(\"" + to_string(line_count) + "\", \"" + to_string(for_loop_flag || while_loop_flag) + "\", ";
-            if (for_loop_flag || while_loop_flag) {
-                output << "loop_counter, ";
-            }
-            else {
-                output << "-1, ";
-            }
-            if (in_parallel_flag) {
-                output << "omp_get_thread_num(), \"" << to_string(in_parallel_flag) << "\") && " << temp2;
-            }
-            else {
-                output << "-1, \"" << to_string(in_parallel_flag) << "\") && " << temp2;
-            }
-        }
-        else if (flag == 7) { // else case
-            int j = 0;
-            while (j < line.length() && line[j] != '(') {
-                j++;
-            }
-            string temp3;
-            if (j == line.length()) { // if only else statement than add if part which writes into file
-                output << line + " if(add_function(\"" + to_string(line_count) + "\", \"" + to_string(for_loop_flag || while_loop_flag) + "\", ";
+            if (has_critical || has_atomic) {
+                output << temp1 + "result<<\"" + to_string(line_count) + "\"";
                 if (for_loop_flag || while_loop_flag) {
-                    output << "loop_counter, ";
-                }
-                else {
-                    output << "-1, ";
+                    output << "<<\"_\"<<to_string(loop_counter)";
                 }
                 if (in_parallel_flag) {
-                    output << "omp_get_thread_num(), \"" << to_string(in_parallel_flag) << "\"))";
+                    output << "<<\"@\"<<to_string(omp_get_thread_num())";
                 }
-                else {
-                    output << "-1, \"" << to_string(in_parallel_flag) << "\"))";
-                }
+                output << "<<\"#\"" << " && " << temp2;
             }
-            else { // for in else portion if statement exist in that case to write into result file
-                j++;
-                string temp1 = line.substr(0, j);
-                string temp2 = line.substr(j);
+            else {
                 output << temp1 + "add_function(\"" + to_string(line_count) + "\", \"" + to_string(for_loop_flag || while_loop_flag) + "\", ";
                 if (for_loop_flag || while_loop_flag) {
                     output << "loop_counter, ";
@@ -2083,6 +2167,70 @@ int main() {
                 }
                 else {
                     output << "-1, \"" << to_string(in_parallel_flag) << "\") && " << temp2;
+                }
+            }
+        }
+        else if (flag == 7) { // else case
+            int j = 0;
+            while (j < line.length() && line[j] != '(') {
+                j++;
+            }
+            string temp3;
+            if (j == line.length()) { // if only else statement than add if part which writes into file
+                if (has_critical || has_atomic) {
+                    output << line + " if(" + "result<<\"" + to_string(line_count) + "\"";
+                    if (for_loop_flag || while_loop_flag) {
+                        output << "<<\"_\"<<to_string(loop_counter)";
+                    }
+                    if (in_parallel_flag) {
+                        output << "<<\"@\"<<to_string(omp_get_thread_num())";
+                    }
+                    output << "<<\"#\")";
+                }
+                else {
+                    output << line + " if(add_function(\"" + to_string(line_count) + "\", \"" + to_string(for_loop_flag || while_loop_flag) + "\", ";
+                    if (for_loop_flag || while_loop_flag) {
+                        output << "loop_counter, ";
+                    }
+                    else {
+                        output << "-1, ";
+                    }
+                    if (in_parallel_flag) {
+                        output << "omp_get_thread_num(), \"" << to_string(in_parallel_flag) << "\"))";
+                    }
+                    else {
+                        output << "-1, \"" << to_string(in_parallel_flag) << "\"))";
+                    }
+                }
+            }
+            else { // for in else portion if statement exist in that case to write into result file
+                j++;
+                string temp1 = line.substr(0, j);
+                string temp2 = line.substr(j);
+                if (has_critical || has_atomic) {
+                    output << temp1 + "result<<\"" + to_string(line_count) + "\"";
+                    if (for_loop_flag || while_loop_flag) {
+                        output << "<<\"_\"<<to_string(loop_counter)";
+                    }
+                    if (in_parallel_flag) {
+                        output << "<<\"@\"<<to_string(omp_get_thread_num())";
+                    }
+                    output << "<<\"#\"" << " && " << temp2;
+                }
+                else {
+                    output << temp1 + "add_function(\"" + to_string(line_count) + "\", \"" + to_string(for_loop_flag || while_loop_flag) + "\", ";
+                    if (for_loop_flag || while_loop_flag) {
+                        output << "loop_counter, ";
+                    }
+                    else {
+                        output << "-1, ";
+                    }
+                    if (in_parallel_flag) {
+                        output << "omp_get_thread_num(), \"" << to_string(in_parallel_flag) << "\") && " << temp2;
+                    }
+                    else {
+                        output << "-1, \"" << to_string(in_parallel_flag) << "\") && " << temp2;
+                    }
                 }
             }
         }
@@ -2123,19 +2271,30 @@ int main() {
             output << "}\n";
         }
         else if (flag == 9) { // to write in case of nested pragma constructs
-        //cout << line_count<<" reached\n";
             int j = 0;
             while (j < line.length()) {
                 p = find_token(j, line);
                 j = p.first;
-                if (p.second == "sections" || p.second == "for") {
+                if (p.second == "sections" || p.second == "for" || p.second == "atomic" || p.second == "critical" || p.second == "barrier" 
+                    || p.second == "flush" || p.second == "threadprivate") {
                     break;
                 }
+            }
+            if (p.second == "threadprivate") {
+                output << "result<<\"" + to_string(line_count) + "\"" + "<<\"#\";\n";
+                output << line + "\n";
+                continue;
             }
             if (p.second == "sections") {
                 has_sections = 1;
             }
-            if (p.second == "sections" || p.second == "for") {
+            if (p.second == "atomic") {
+                has_atomic = 1;
+            }
+            if (p.second == "critical") {
+                has_critical = 1;
+            }
+            if (p.second == "sections" || p.second == "for" || p.second == "barrier" || p.second == "atomic" || p.second == "critical" || p.second == "flush") {
                 must_adding_lines.push_back(to_string(line_count));
                 if (p.second == "for") {
                     output << "int loop_counter = 0;\n";
@@ -2156,12 +2315,10 @@ int main() {
     }
     fin.close();
     output.close();
-
-    find_trace();
+    find_trace(error_line_number);
     remove("./output.cpp");
     remove("./output.exe");
     remove("./result.txt");
-
     if (code.find(error_line_number) == code.end()) {
         cout << "You entered line number does not contains \n";
         return 0;
