@@ -37,7 +37,8 @@ int clone_bracket_count = 0, section_bracket_count = 0, parallel_bracket_count =
 bool do_clone = 0, clone_in_progress = 0, in_section = 0, in_parallel = 0;
 pair<int,int> clone_scope = {0,0};
 pair<int,int> parallel_scope = {0,0};
-
+ofstream output;
+int total_number_of_lines_of_header_files = 0;
 void process(string line, string number);
 void keywords_init() {
     keywords["for"] = 1;
@@ -86,11 +87,11 @@ void find_slice(string number) {
                 unordered_set<int> temp = dynamic_slice[use_temp[i][j]];
                 for(auto it:temp) {
                     dynamic_slice[def_temp[i]].insert(it);
-                    // cout<<number<<" : "<<def_temp[i]<<" -> "<<temp[k]<<endl;
+                    // cout<<number<<" : "<<def_temp[i]<<" -> "<<it<<endl;
                 }
             }
             dynamic_slice[def_temp[i]].insert(last_statement[use_temp[i][j]]);
-            // cout<<number<<" : "<<def_temp[i]<<" -> "<<last_statement[use_temp[i][j]]<<endl;
+            // cout<<number<<" : "<<def_temp[i]<<" => "<<last_statement[use_temp[i][j]]<<endl;
         }
         last_statement[def_temp[i]] = stoi(line_number);
     }
@@ -117,14 +118,17 @@ bool find_slices(int slicing_line_number, string start, string end) {
         }
 
         if(!flag || do_clone || (flag && j < line.length() && (line[j] == '{' || line[j] == '}'))) {
+            // cout<<number<<" : "<<source_code[i]<<endl;
             process(source_code[i], number);
             if(function_call.find(number) != function_call.end()) {
                 find_slice(number);
-                if(find_slices(slicing_line_number, function_definition[function_call[number]].first, function_definition[function_call[number]].second)) {
+                if(function_definition.find(function_call[number]) != function_definition.end() &&
+                 find_slices(slicing_line_number, function_definition[function_call[number]].first, function_definition[function_call[number]].second)) {
                     return 1;
                 }
                 process(source_code[i], number);
             }
+            // cout<<number<<" : "<<source_code[i]<<endl;
             find_slice(number);
             if(flag && section_bracket_count == 1) {
                 flag = 0;
@@ -601,6 +605,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
     stringstream ss(number);
     string temp;
     getline(ss, temp, ',');
+
     if(visited_lines.find(temp) == visited_lines.end()) {
         if(return_value_expects) {
             visited_lines.insert(temp);
@@ -625,7 +630,6 @@ void process_function_call(string line, string number, int currentIndex, bool re
                 if((i-p.second.length()-1 >= 0 && line[i-p.second.length()-1] != '&') || i-p.second.length()-1 < 0) {
                     string address = variable_to_location_map[number][p.second];
                     use[number][use[number].size()-1].push_back(address);
-
                     // in case of pointer
                     int j = int(i - p.second.length() - 1);
                     while (j >= 0 && line[j] == ' ') {
@@ -673,7 +677,32 @@ void process_function_call(string line, string number, int currentIndex, bool re
         }
         // for right side of '='
         i = 0;
-        use[number][use[number].size()-1].push_back("ret(" + function_name + ")");
+
+        if(function_definition.find(function_name) != function_definition.end()) {
+            use[number][use[number].size()-1].push_back("ret(" + function_name + ")");
+        } else { // in case of library functions
+            stringstream ss(line);
+            string temp;
+            getline(ss, temp, '(');
+            getline(ss, temp, '(');
+            getline(ss, temp, ')');
+            int j = 0;
+            while(j < temp.length()) {
+                pair<int,string> p = find_token(j, temp);
+                j = p.first;
+                if(p.second != "" && datatypes.find(p.second) == datatypes.end() && !(p.second[0] >= 48 && p.second[0] <= 57) && keywords.find(p.second) == keywords.end()) {  
+                    // assign address to variable
+                    if(existing_variables.find(p.second) != existing_variables.end()) {
+                        variable_to_location_map[number][p.second] = existing_variables[p.second].top().first;
+                    } else {
+                        cout<<p.second<<" not found in function call\n";
+                    }
+                    string address = variable_to_location_map[number][p.second];
+                    use[number][use[number].size()-1].push_back(address);
+                }
+            }
+        }
+
         while(i < temp2.length()) {
             pair<int,string> p = find_token(i, temp2);
             i = p.first;
@@ -896,6 +925,14 @@ void remove_related_existing_variables(string number) {
 
 void process(string line, string number) {
     int i = 0;
+    while(i < line.length() && line[i] == ' ') {
+        i++;
+    }
+    if(i < line.length() && line[i] == '/' && i+1 < line.length() && line[i+1] == '/') {
+        return;
+    }
+
+    i = 0;
     pair<int,string> token = find_token(i, line);
     i = token.first;
     string temp = token.second;
@@ -1127,7 +1164,7 @@ string find_function_name(string line) {
 
 void find_trace() {
     ifstream fin;
-    fin.open("tSource.cpp");
+    fin.open("output.cpp");
     source_code.push_back("");
     int count = 0;
     string curr_function;
@@ -1224,6 +1261,44 @@ void show_output(int slicing_line_number, vector<string> variable_names) {
     }
 }
 
+void add_lines_from_header_file(string temp) {
+    ifstream fin;
+    fin.open(temp);
+    string line;
+    while(!fin.eof()) {
+        total_number_of_lines_of_header_files++;
+        getline(fin, line);
+        int i = 1;
+        while(i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while(i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if(temp == "include") {
+            i++;
+            temp = "";
+            while(i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if(fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            } else {
+                output<<line + "\n";
+            }
+        } else {
+            output<<line + "\n";
+        }
+    }
+    total_number_of_lines_of_header_files--;
+    fin.close();
+}
+
 int main() {
     keywords_init();
     int slicing_line_number;
@@ -1238,6 +1313,45 @@ int main() {
         cin>>variable_names[i];
     }
     cout<<"Source file parsing is in progress...\n";
+
+    // to add lines of source code to output file which is helpful in case of importing functions from header files
+    string line;
+    ifstream fin;
+    fin.open("tSource.cpp");
+    output.open("output.cpp");
+    while (!fin.eof()) {
+        getline(fin, line);
+        int i = 1;
+        while(i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while(i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if(temp == "include") {
+            i++;
+            temp = "";
+            while(i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if(fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            } else {
+                output<<line + "\n";
+            }
+        } else {
+            output<<line + "\n";
+        }
+    }
+
+    fin.close();
+    output.close();
+
     find_trace();
     // for(auto it=function_definition.begin();it!=function_definition.end();it++) {
     //     cout<<it->first<<" -> "<<it->second.first<<" : "<<it->second.second<<endl;
@@ -1246,6 +1360,8 @@ int main() {
     // for(auto it=function_call.begin();it!=function_call.end();it++) {
     //     cout<<it->first<<" -> "<<it->second<<endl;
     // }
+    slicing_line_number += total_number_of_lines_of_header_files;
+
     find_slices(slicing_line_number, function_definition["main"].first, function_definition["main"].second);
 
     show_output(slicing_line_number, variable_names);

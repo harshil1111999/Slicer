@@ -35,6 +35,8 @@ bool has_critical = 0, has_atomic = 0, has_sections = 0;
 unordered_map<string, vector<int>> marking_lines; // for dependent lines, mark lines which flags dependent lines to include
 unordered_map<string, vector<int>> dependent_lines; // lines like sections and for which haven't processed but should include if marked lines are added
 unordered_map<string, int> static_variables; // for to keep track of static variables for threadprivate construct
+ofstream temp_source;
+int total_number_of_lines_of_header_files = 0;
 
 void keywords_init() {
     keywords["for"] = 1;
@@ -543,7 +545,28 @@ void process_function_call(string line, string number, int currentIndex, bool re
 
         // for right side of '='
         i = 0;
-        use[number][use[number].size() - 1].push_back("ret(" + function_name + ")");
+
+        if (function_names.find(function_name) != function_names.end()) {
+            use[number][use[number].size() - 1].push_back("ret(" + function_name + ")");
+        }
+        else { // in case of library functions
+            
+            stringstream ss(line);
+            string temp;
+            getline(ss, temp, '(');
+            getline(ss, temp, '(');
+            getline(ss, temp, ')');
+            int j = 0;
+            while (j < temp.length()) {
+                pair<int, string> p = find_token(j, temp);
+                j = p.first;
+                if (p.second != "" && datatypes.find(p.second) == datatypes.end() && !(p.second[0] >= 48 && p.second[0] <= 57) && keywords.find(p.second) == keywords.end()) {
+                    string address = variable_to_location_map[number][p.second];
+                    use[number][use[number].size() - 1].push_back(address);
+                }
+            }
+        }
+
         while (i < temp2.length()) {
             pair<int, string> p = find_token(i, temp2);
             i = p.first;
@@ -1017,19 +1040,97 @@ pair<int, int> can_insert(string line, int number) {
     return { 0,0 };
 }
 
+void add_lines_from_header_file(string temp) {
+    ifstream fin;
+    fin.open(temp);
+    string line;
+    while (!fin.eof()) {
+        total_number_of_lines_of_header_files++;
+        getline(fin, line);
+        int i = 1;
+        while (i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if (temp == "include") {
+            i++;
+            temp = "";
+            while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if (fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            }
+            else {
+                temp_source << line + "\n";
+            }
+        }
+        else {
+            temp_source << line + "\n";
+        }
+    }
+    total_number_of_lines_of_header_files--;
+    fin.close();
+}
+
 int main() {
     keywords_init();
     source_code.push_back("");
     string line;
     ifstream fin;
     fin.open("tSource.cpp");
+    temp_source.open("temp_source.cpp");
+    // to add lines of source code to output file which is helpful in case of importing functions from header files
+    while (!fin.eof()) {
+        getline(fin, line);
+        int i = 1;
+        while (i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if (temp == "include") {
+            i++;
+            temp = "";
+            while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if (fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            }
+            else {
+                temp_source << line + "\n";
+            }
+        }
+        else {
+            temp_source << line + "\n";
+        }
+    }
+
+    fin.close();
+    temp_source.close();
+    fin.open("temp_source.cpp");
+
     ofstream output;
     output.open("output.cpp");
     output << "#include<sstream>\n#include<fstream>\n#include<omp.h>\n";
-    int error_line_number;
+    int slicing_line_number;
     int size;
     cout << "Enter line number where you wnat to find slice : ";
-    cin >> error_line_number;
+    cin >> slicing_line_number;
     cout << "Enter number of variables : ";
     cin >> size;
     vector<string> variable_names(size);
@@ -1377,12 +1478,14 @@ int main() {
     const char* command = s.c_str();
     system(command);
     system("output.exe");
-
+    function_names.clear();
     // from the info file get the location of variables
     find_variable_locations();
 
+    slicing_line_number += total_number_of_lines_of_header_files;
+
     // find answer
-    find_trace(error_line_number, variable_names);
+    find_trace(slicing_line_number, variable_names);
 
     // remove created files
     remove("output.cpp");
