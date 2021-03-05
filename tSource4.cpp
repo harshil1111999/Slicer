@@ -3,7 +3,7 @@
 #include<iostream>
 #include<omp.h>
 using namespace std;
-int fun(int x, int* y)
+int fun(int x, int *y)
 {
     int k = 10;
     int c = 10;

@@ -3,7 +3,7 @@
 #include<iostream>
 #include<omp.h>
 using namespace std;
-int fun(int x, int* y)
+int fun(int x, int *y)
 {
     int k = 10;
     int c = 10;
@@ -22,10 +22,6 @@ int fun(int x, int* y)
             *y = x * *y;
         }
 #pragma omp barrier
-    }
-    cout << a << endl;
-#pragma omp parallel 
-    {
 #pragma omp for reduction(+:k)
         for (int i = 0; i < 2; i = i + 1)
         {
