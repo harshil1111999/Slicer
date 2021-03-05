@@ -34,7 +34,10 @@ int count_for_sections = 0; // for to check when closing bracket of sections con
 bool has_sections = 0; // to mark that code contains sections construct
 vector<string> must_adding_lines;
 bool has_critical = 0, has_atomic = 0;
+bool functions_added = 0;
 int brackets = 0;
+ofstream temp_source;
+int total_number_of_lines_of_header_files = 0;
 
 void process(string line, string number);
 
@@ -155,7 +158,7 @@ void process_definition(string line, int currentIndex, string number) {
         i = token.first;
         string temp = token.second;
         if (in_parallel_flag && !(temp[0] >= 48 && temp[0] <= 57) && temp != "" && temp[0] != '"' && temp[0] != '\'') {
-            
+
             while (threads_variable_name_to_nodes_used.size() < thread_number + 1) {
                 unordered_map < string, vector<struct node*>> mp;
                 threads_variable_name_to_nodes_used.push_back(mp);
@@ -356,7 +359,7 @@ void process_if(string line, int currentIndex, string number) {
         if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
             continue;
         }
-        else if (variable_name_to_nodes.find(temp) == variable_name_to_nodes.end() && threads_variable_name_to_nodes_defined.size() > thread_number && 
+        else if (variable_name_to_nodes.find(temp) == variable_name_to_nodes.end() && threads_variable_name_to_nodes_defined.size() > thread_number &&
             threads_variable_name_to_nodes_defined[thread_number].find(temp) == threads_variable_name_to_nodes_defined[thread_number].end()) {
             cout << "The variable name " << temp << " does not exist in if portion\n";
         }
@@ -602,7 +605,71 @@ void process_function_call(string line, string number, int currentIndex, bool re
     int thread_number = stoi(t1);
     struct node* temp_node = new node(number, line); // node of function
 
-    int i = currentIndex;
+    int i = 0;
+    if (return_value_expects) {
+        while (i < line.length() && line[i] != '=') {
+            i++;
+        }
+    }
+    // to find name of function
+    pair<int, string> p = find_token(i, line);
+    string function_name = p.second;
+
+    // in case of library function call
+    if (function_map.find(function_name) == function_map.end()) {
+        //if return_value_expects than find which variable is defined
+        if (return_value_expects) {
+            int i = 0;
+            while (i < line.length() && line[i] != '=') {
+                i++;
+            }
+            while (i >= 0 && !((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90))) {
+                i--;
+            }
+            string temp = "";
+            while (i >= 0 && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90))) {
+                temp = line[i--] + temp;
+            }
+            temp_node->defined.insert(temp);
+            if (in_parallel_flag) {
+                while (threads_variable_name_to_nodes_defined.size() < thread_number + 1) {
+                    unordered_map < string, vector<struct node*>> mp;
+                    threads_variable_name_to_nodes_defined.push_back(mp);
+                }
+                threads_variable_name_to_nodes_defined[thread_number][temp].push_back(temp_node);
+            }
+            else {
+                variable_name_to_nodes[temp].push_back(temp_node);
+            }
+        }
+
+        i = currentIndex;
+        while (i < line.length()) {
+            pair<int, string> token = find_token(i, line);
+
+            i = token.first;
+            string temp = token.second;
+
+            if ((temp[0] >= 48 && temp[0] <= 57) || temp == "" || temp[0] == '"' || temp[0] == '\'') {
+                continue;
+            }
+            else {
+                // data dependence
+                vector<struct node*> v;
+                if (threads_variable_name_to_nodes_defined.size() > thread_number && threads_variable_name_to_nodes_defined[thread_number].find(temp) != threads_variable_name_to_nodes_defined[thread_number].end()) {
+                    v = threads_variable_name_to_nodes_defined[thread_number][temp];
+                }
+                else {
+                    v = variable_name_to_nodes[temp];
+                }
+                temp_node->parent.push_back(v[v.size() - 1]);
+            }
+        }
+        code[number] = temp_node;
+        return;
+    }
+
+    i = currentIndex;
     while (i < line.length()) {
         pair<int, string> token = find_token(i, line);
 
@@ -634,8 +701,8 @@ void process_function_call(string line, string number, int currentIndex, bool re
                 }
                 threads_variable_name_to_nodes_defined[thread_number][temp1].push_back(actual_in_node);
                 while (threads_variable_name_to_nodes_used.size() < thread_number + 1) {
-                unordered_map < string, vector<struct node*>> mp;
-                threads_variable_name_to_nodes_used.push_back(mp);
+                    unordered_map < string, vector<struct node*>> mp;
+                    threads_variable_name_to_nodes_used.push_back(mp);
                 }
                 threads_variable_name_to_nodes_used[thread_number][temp].push_back(temp_node);
             }
@@ -675,16 +742,6 @@ void process_function_call(string line, string number, int currentIndex, bool re
         }
     }
 
-    i = 0;
-    if (return_value_expects) {
-        while (i < line.length() && line[i] != '=') {
-            i++;
-        }
-    }
-    // to find name of function
-    pair<int, string> p = find_token(i, line);
-    string function_name = p.second;
-
     // for parameter edge
     vector<struct node*> v1 = function_map[function_name]->formal_in_nodes;
     vector<struct node*> v2 = temp_node->actual_in_nodes;
@@ -706,7 +763,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
     }
 
     //return link edge
-    if (return_statements.find(function_map[function_name]) != return_statements.end()) {
+    if (return_value_expects && return_statements.find(function_map[function_name]) != return_statements.end()) {
         struct node* return_node = return_statements[function_map[function_name]];
         temp_node->return_link = return_node;
     }
@@ -1001,6 +1058,14 @@ void process_pragma(string line, int currentIndex, string number) {
 
 void process(string line, string number) {
     int i = 0;
+    while (i < line.length() && line[i] == ' ') {
+        i++;
+    }
+    if (i < line.length() && line[i] == '/' && i + 1 < line.length() && line[i + 1] == '/') {
+        return;
+    }
+
+    i = 0;
     pair<int, string> token = find_token(i, line);
     i = token.first;
     string temp = token.second;
@@ -1031,7 +1096,7 @@ void process(string line, string number) {
             while (i < line.length()) {
                 token = find_token(i, line);
                 i = token.first;
-                temp = token.second; 
+                temp = token.second;
                 if (temp == "threadprivate") {
                     while (i < line.length()) {
                         token = find_token(i, line);
@@ -1258,7 +1323,7 @@ void process(string line, string number) {
 
                 if (check) {
                     // cout << "in check " << number << endl;
-                    for (int i = 0; i < threads_variable_name_to_nodes_defined.size() ; i++) {
+                    for (int i = 0; i < threads_variable_name_to_nodes_defined.size(); i++) {
                         for (auto it : shared_variables) {
                             if (threads_variable_name_to_nodes_defined[i].find(it) != threads_variable_name_to_nodes_defined[i].end()) {
                                 vector<struct node*> v = threads_variable_name_to_nodes_defined[i][it];
@@ -1270,7 +1335,7 @@ void process(string line, string number) {
                                 for (int k = 0; k < i; k++) {
                                     if (threads_variable_name_to_nodes_defined[k].find(it) != threads_variable_name_to_nodes_defined[k].end()) {
                                         vector<struct node*> v1 = threads_variable_name_to_nodes_defined[k][it];
-                                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size()-1]);
+                                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size() - 1]);
                                     }
                                 }
                             }
@@ -1289,7 +1354,7 @@ void process(string line, string number) {
                                 }
                             }
                             else {
-                                cout << number <<" error in }\n";
+                                cout << number << " error in }\n";
                             }
                         }
                     }
@@ -1376,50 +1441,50 @@ void process(string line, string number) {
 }
 
 bool cmp(string a, string b) {
-     string temp1, temp2, temp3, temp4;
-     vector<int> a_temp, b_temp;
-     vector<string> c_temp, d_temp;
-     stringstream temp3_line(a), temp4_line(b);
-     while (getline(temp3_line, temp3, '@')) {
-         c_temp.push_back(temp3);
-     }
-     while (getline(temp4_line, temp4, '@')) {
-         d_temp.push_back(temp4);
-     }
+    string temp1, temp2, temp3, temp4;
+    vector<int> a_temp, b_temp;
+    vector<string> c_temp, d_temp;
+    stringstream temp3_line(a), temp4_line(b);
+    while (getline(temp3_line, temp3, '@')) {
+        c_temp.push_back(temp3);
+    }
+    while (getline(temp4_line, temp4, '@')) {
+        d_temp.push_back(temp4);
+    }
 
-     stringstream temp1_line(c_temp[0]), temp2_line(d_temp[0]);
+    stringstream temp1_line(c_temp[0]), temp2_line(d_temp[0]);
 
-     while (getline(temp1_line, temp1, '_')) {
-         a_temp.push_back(stoi(temp1));
-     }
-     while (getline(temp2_line, temp2, '_')) {
-         b_temp.push_back(stoi(temp2));
-     }
+    while (getline(temp1_line, temp1, '_')) {
+        a_temp.push_back(stoi(temp1));
+    }
+    while (getline(temp2_line, temp2, '_')) {
+        b_temp.push_back(stoi(temp2));
+    }
 
-     if (c_temp.size() > 1 && d_temp.size() > 1) {
-         if (a_temp.size() > 1 && b_temp.size() > 1) {
-             if (c_temp[1] == d_temp[1] && a_temp[1] == b_temp[1]) { // if thread_number is same and loop_count is same than sort acc. to line_number
-                 return a_temp[0] < b_temp[0];
-             }
-             return a_temp[1] < b_temp[1]; // else sort acc. to loop_count
-         }
-         return a_temp[0] < b_temp[0]; // if any one of them is not part of loop than sort acc. line_number
-     }
-     if (c_temp.size() > 1 || d_temp.size() > 1) { // if any one of them is not part of thread than sort acc. line_number
-         return a_temp[0] < b_temp[0];
-     }
+    if (c_temp.size() > 1 && d_temp.size() > 1) {
+        if (a_temp.size() > 1 && b_temp.size() > 1) {
+            if (c_temp[1] == d_temp[1] && a_temp[1] == b_temp[1]) { // if thread_number is same and loop_count is same than sort acc. to line_number
+                return a_temp[0] < b_temp[0];
+            }
+            return a_temp[1] < b_temp[1]; // else sort acc. to loop_count
+        }
+        return a_temp[0] < b_temp[0]; // if any one of them is not part of loop than sort acc. line_number
+    }
+    if (c_temp.size() > 1 || d_temp.size() > 1) { // if any one of them is not part of thread than sort acc. line_number
+        return a_temp[0] < b_temp[0];
+    }
 
-     // if none of them are part of thread
-     if (a_temp.size() > 1 && b_temp.size() > 1) {
-         if (a_temp[1] == b_temp[1]) { // if for both loop_count is same than sort acc. to line_number
-             return a_temp[0] < b_temp[0];
-         }
-         return a_temp[1] < b_temp[1]; // else sort acc loop_counter
-     }
-     if (a_temp[0] < b_temp[0]) {
-         return 1;
-     }
-     return 0;
+    // if none of them are part of thread
+    if (a_temp.size() > 1 && b_temp.size() > 1) {
+        if (a_temp[1] == b_temp[1]) { // if for both loop_count is same than sort acc. to line_number
+            return a_temp[0] < b_temp[0];
+        }
+        return a_temp[1] < b_temp[1]; // else sort acc loop_counter
+    }
+    if (a_temp[0] < b_temp[0]) {
+        return 1;
+    }
+    return 0;
 }
 
 void find_trace(string line_number) {
@@ -1555,11 +1620,11 @@ void show_output(string line_number, vector<string> variable_names) {
     while (!q.empty()) {
         struct node* curr = q.front();
         q.pop();
-        
+
         // for same line but from different threads !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! be aware of this
         vector<struct node*> v1 = curr->parallel_thread_nodes;
         for (int i = 0; i < v1.size(); i++) {
-            string s1,s2;
+            string s1, s2;
             stringstream ss1(v1[i]->line_number);
             stringstream ss2(curr->line_number);
             getline(ss1, s1, '@');
@@ -1744,6 +1809,23 @@ int can_insert(string line, int number) {
         return 1;
     }
 
+    p = find_token(0, line);
+    temp = p.second;
+
+    if (temp == "include" || temp == "using") {
+        pair<int, string> p1 = find_token(p.first, line);
+        pair<int, string> p2 = find_token(p1.first, line);
+        if (p1.second == "namespace" && p2.second == "std" && !functions_added) {
+            functions_added = 1;
+            return 8;
+        }
+        return 0;
+    }
+
+    if (control_dependence2.empty()) {
+        return 0;
+    }
+
     if (i < line.length() && line[i] == '}') {
         if (has_sections) {
             count_for_sections--;
@@ -1767,23 +1849,12 @@ int can_insert(string line, int number) {
         return 4;
     }
 
-    p = find_token(0, line);
-    temp = p.second;
-    /*while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
-        temp += line[i++];
-    }*/
-
-    if (temp == "include" || temp == "using") {
-        pair<int,string> p1 = find_token(p.first, line);
-        pair<int, string> p2 = find_token(p1.first, line);
-        if (p1.second == "namespace" && p2.second == "std") {
-            return 8;
-        }
-        return 0;
-    }
-
     if (temp == "if") {
         return 6;
+    }
+
+    if (temp == "return") {
+        return 10;
     }
 
     if (temp == "else") {
@@ -1811,19 +1882,99 @@ int can_insert(string line, int number) {
     return 2;
 }
 
+void add_lines_from_header_file(string temp) {
+    ifstream fin;
+    fin.open(temp);
+    string line;
+    while (!fin.eof()) {
+        total_number_of_lines_of_header_files++;
+        getline(fin, line);
+        pair<int, string> p = find_token(0, line);
+        int i = 1;
+        while (i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if (temp == "include") {
+            i++;
+            temp = "";
+            while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if (fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            }
+            else {
+                temp_source << line + "\n";
+            }
+        }
+        else {
+            temp_source << line + "\n";
+        }
+    }
+    total_number_of_lines_of_header_files--;
+    fin.close();
+}
+
 int main() {
     keywords_init();
     source_code.push_back("");
     string line;
     ifstream fin;
-    fin.open("Dynamic tSource.cpp");
+    fin.open("tSource.cpp");
+
+    temp_source.open("temp_source.cpp");
+    // to add lines of source code to output file which is helpful in case of importing functions from header files
+    while (!fin.eof()) {
+        getline(fin, line);
+        int i = 1;
+        while (i < line.length() && line[i] == ' ') {
+            i++;
+        }
+        string temp = "";
+        while (i < line.length() && line[i] >= 97 && line[i] <= 122) {
+            temp += line[i++];
+        }
+
+        if (temp == "include") {
+            i++;
+            temp = "";
+            while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) || line[i] == '.')) {
+                temp += line[i++];
+            }
+            ifstream fin2;
+            fin2.open(temp);
+            if (fin2.is_open()) {
+                fin2.close();
+                add_lines_from_header_file(temp);
+            }
+            else {
+                temp_source << line + "\n";
+            }
+        }
+        else {
+            temp_source << line + "\n";
+        }
+    }
+
+    fin.close();
+    temp_source.close();
+    fin.open("temp_source.cpp");
+
     ofstream output;
     output.open("output.cpp");
     output << "#include<sstream>\n#include<fstream>\n";
-    string error_line_number;
+    string slicing_line_number;
     int num;
     cout << "Enter line number where you wnat to find slice(format in case of loop is [line number]_[iteration number starting at 0]) : ";
-    cin >> error_line_number;
+    cin >> slicing_line_number;
     cout << "Enter number of variables : ";
     cin >> num;
     vector<string> variable_names(num);
@@ -1831,11 +1982,21 @@ int main() {
         cout << "Enter variable name : ";
         cin >> variable_names[i];
     }
+
+    string temp_s2 = slicing_line_number;
+    stringstream temp_ss(temp_s2);
+    string temp_s;
+    getline(temp_ss, temp_s, '_');
+    slicing_line_number = to_string(stoi(temp_s) + total_number_of_lines_of_header_files);
+    if (getline(temp_ss, temp_s, '_')) {
+        slicing_line_number += temp_s;
+    }
+
     cout << "Source file parsing is in progress...\n";
     int line_count = 0;
     vector<string> temp1;
     string temp2;
-    stringstream temp2_line(error_line_number);
+    stringstream temp2_line(slicing_line_number);
     while (getline(temp2_line, temp2, '_')) {
         temp1.push_back(temp2);
     }
@@ -1869,7 +2030,6 @@ int main() {
             p = find_token(0, control_dependence2.top());
         }
         if (flag == 2) {   // general case
-
             string temp_line = "";
             if (while_loop_flag || for_loop_flag) {
                 temp_line = "\"" + to_string(line_count) + "_\"" + "<<to_string(loop_counter)";
@@ -1947,11 +2107,11 @@ int main() {
                 }
 
                 // in case of sections to write critical construct for atomic write in file which is not allowed to write saparately in sections
-                pair<int, string> p = find_token(0, source_code[line_count-1]);
+                pair<int, string> p = find_token(0, source_code[line_count - 1]);
                 p = find_token(p.first, source_code[line_count - 1]);
                 p = find_token(p.first, source_code[line_count - 1]);
                 if (p.second == "section") {
-                    output << "result<<\"" + to_string(line_count-1) + "\" << \"@\"<<omp_get_thread_num()<<\"" + "#" + "\";\n";
+                    output << "result<<\"" + to_string(line_count - 1) + "\" << \"@\"<<omp_get_thread_num()<<\"" + "#" + "\";\n";
                 }
 
                 output << "result<<\"" + to_string(line_count) + "\" << \"@\"<<omp_get_thread_num()<<\"" + "#" + "\";\n";
@@ -1960,7 +2120,7 @@ int main() {
                 }
             }
             else if (p.second == "for" || p.second == "while") {
-                string temp_line = "\"" + to_string(line_count-1) + "_\"<<to_string(loop_counter)";
+                string temp_line = "\"" + to_string(line_count - 1) + "_\"<<to_string(loop_counter)";
                 string temp_line1 = "\"" + to_string(line_count) + "_\"<<to_string(loop_counter)";
                 if (in_parallel_flag) {
                     temp_line = temp_line + "<<\"@\"" + "<<to_string(omp_get_thread_num())";
@@ -2128,7 +2288,7 @@ int main() {
             control_dependence2.pop();
         }
         else if (flag == 5) { // loop case
-            p = find_token(0, source_code[line_count-1]);
+            p = find_token(0, source_code[line_count - 1]);
             if (p.second != "pragma") {
                 output << "int loop_counter = 0;\n";
             }
@@ -2275,7 +2435,7 @@ int main() {
             while (j < line.length()) {
                 p = find_token(j, line);
                 j = p.first;
-                if (p.second == "sections" || p.second == "for" || p.second == "atomic" || p.second == "critical" || p.second == "barrier" 
+                if (p.second == "sections" || p.second == "for" || p.second == "atomic" || p.second == "critical" || p.second == "barrier"
                     || p.second == "flush" || p.second == "threadprivate") {
                     break;
                 }
@@ -2309,19 +2469,26 @@ int main() {
             output << "}\n";
             output << line + "\n";
         }
+        else if (flag == 10) {
+            output << "result<<\"" << to_string(line_count) << "\"" << "\"#\";\n";
+            output << line + "\n";
+            control_dependence2.pop();
+        }
         else { // #, main, using case
             output << line + "\n";
         }
     }
     fin.close();
     output.close();
-    find_trace(error_line_number);
+
+    find_trace(slicing_line_number);
     remove("./output.cpp");
     remove("./output.exe");
     remove("./result.txt");
-    if (code.find(error_line_number) == code.end()) {
+    remove("./temp_source.txt");
+    if (code.find(slicing_line_number) == code.end()) {
         cout << "You entered line number does not contains \n";
         return 0;
     }
-    show_output(error_line_number, variable_names);
+    show_output(slicing_line_number, variable_names);
 }

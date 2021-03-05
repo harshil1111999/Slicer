@@ -3,35 +3,8 @@
 #include<iostream>
 #include<omp.h>
 #include<vector>
+#include"tfun.h"
 using namespace std;
-int fun(int x, int *y)
-{
-    int k = 10;
-    int c = 10;
-#pragma omp parallel
-    {
-        if (x > *y)
-        {
-            k = x + *y;
-            *y = x + *y;
-        }
-        else
-        {
-            *y = x * *y;
-        }
-        #pragma omp barrier
-#pragma omp for
-        for (int i = 0; i < 2; i = i + 1)
-        {
-            k = k + i;
-        }
-#pragma omp critical
-        {
-            x = x + k;
-        }
-    }
-    return x;
-}
 
 int main()
 {
@@ -41,6 +14,9 @@ int main()
     cin >> z;
     cin >> n;
     int k = 19;
+    string temp;
+    temp = to_string(k);
+    cout<<temp<<endl;
     y = z;
     x = y + z;
     for (int i = 0; i < n; i = i + 1)
