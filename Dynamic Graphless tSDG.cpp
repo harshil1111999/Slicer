@@ -14,6 +14,7 @@ using namespace std;
 unordered_map<string, int> keywords; // for inbuilt keywords
 unordered_set<string> datatypes; // for inbuilt datatypes
 unordered_set<string> function_names; // for user defined functions
+unordered_set<string> function_names2; // for user defined and library functions 
 unordered_map<string, unordered_map<string, string>> variable_to_location_map; // map of line_number -> variable_name -> address_of_variable
 // unordered_map<string, string> name_to_number; // in case of 'o', 'p', 'ret', 'arg'
 unordered_map<string, string> variable_to_pointer_map; // map of variable to it's reference variable
@@ -60,9 +61,19 @@ void keywords_init() {
 //parse words from the line
 pair<int, string> find_token(int i, string line) {
     string temp = "";
+    bool is_string = 0;
     while (i < line.length() && !(line[i] >= 97 && line[i] <= 122) && !(line[i] >= 65 && line[i] <= 90)
         && !(line[i] >= 48 && line[i] <= 57) && line[i] != '_' && line[i] != '"' && line[i] != '\'') {
         i++;
+    }
+
+    if (i < line.length() && line[i] == '"') {
+        i++;
+        while (i < line.length() && line[i] != '"') {
+            i++;
+        }
+        i++;
+        return find_token(i, line);
     }
 
     while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90)
@@ -468,7 +479,6 @@ void process_cout(string line, int currentIndex, string number) {
 }
 
 void process_function_call(string line, string number, int currentIndex, bool return_value_expects) {
-
     int j = currentIndex - 1;
     while (j >= 0 && line[j] == ' ') {
         j--;
@@ -791,7 +801,7 @@ void process(string line, string number) {
             if (return_value_expects) {
                 process_function_call(line, number, j, 1);
             }
-            else if (function_names.find(temp1) != function_names.end()) {
+            else if (function_names2.find(temp1) != function_names2.end()) {
                 process_function_call(line, number, j, 0);
             }
             else if (j < line.length()) {
@@ -833,6 +843,7 @@ void find_trace(int slicing_line_number, vector<string> variable_names) {
         string temp2, temp3;
         stringstream temp2_line(temp1);
         getline(temp2_line, temp2, ',');
+        // cout << source_code[stoi(temp2)] << " " << temp1 << endl;
         process(source_code[stoi(temp2)], temp1);
         find_slice(temp1);
 
@@ -874,28 +885,32 @@ void find_trace(int slicing_line_number, vector<string> variable_names) {
     vector<int> v1 = dependent_lines["sections"];
     vector<int> v2 = marking_lines["section"];
     for (int i = 0; i < v2.size(); i++) {
-        int last = 0;
-        for (int j = 0; j < v1.size(); j++) {
-            if (v1[j] > v2[i]) {
-                break;
+        if (st.find(v2[i]) != st.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
             }
-            last = v1[j];
+            st.insert(last);
         }
-        st.insert(last);
     }
 
     // for 'for' line
     v1 = dependent_lines["for"];
     v2 = marking_lines["for"];
     for (int i = 0; i < v2.size(); i++) {
-        int last = 0;
-        for (int j = 0; j < v1.size(); j++) {
-            if (v1[j] > v2[i]) {
-                break;
+        if (st.find(v2[i]) != st.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
             }
-            last = v1[j];
+            st.insert(last);
         }
-        st.insert(last);
     }
 
     for (auto it : st) {
@@ -926,7 +941,7 @@ pair<int, int> can_insert(string line, int number) {
                 i--;
             }
 
-            function_names.insert(name);
+            function_names2.insert(name);
 
             if (datatypes.find(p.second) == datatypes.end()) {
                 return { 7,0 };
@@ -1202,7 +1217,7 @@ int main() {
                             pair<int, string> p = find_token(i, earlier_line);
                             i = p.first;
                             if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                                && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                                && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                                 output << "add_function_for_info(\"" + to_string(line_count-1) + "\", \"" + p.second + "\", " + "&" + p.second + ");\n";
                             }
                         }
@@ -1229,7 +1244,7 @@ int main() {
                     pair<int, string> p = find_token(i, temp_line);
                     i = p.first;
                     if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                        && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                        && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                         output << "info<<\"" + to_string(line_count - 1) + "\"<<\",\"" + "<<to_string(counter-1)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
                     }
                 }
@@ -1352,7 +1367,7 @@ int main() {
                 pair<int, string> p = find_token(i, temp_line);
                 i = p.first;
                 if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                    && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                    && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                     output << "info<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
                 }
             }
@@ -1373,7 +1388,7 @@ int main() {
                 pair<int, string> p = find_token(i, temp_line);
                 i = p.first;
                 if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                    && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                    && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                     output << "info<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
                 }
             }
@@ -1400,7 +1415,7 @@ int main() {
                 pair<int, string> p = find_token(i, temp_line);
                 i = p.first;
                 if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                    && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                    && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                     output << "info<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
                 }
             }
@@ -1424,7 +1439,7 @@ int main() {
                     pair<int, string> p = find_token(i, temp_line);
                     i = p.first;
                     if (p.second != "" && !(p.second[0] >= 48 && p.second[0] <= 57) && datatypes.find(p.second) == datatypes.end()
-                        && keywords.find(p.second) == keywords.end() && function_names.find(p.second) == function_names.end()) {
+                        && keywords.find(p.second) == keywords.end() && function_names2.find(p.second) == function_names2.end()) {
                         output << "info<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
                     }
                 }
@@ -1478,7 +1493,6 @@ int main() {
     const char* command = s.c_str();
     system(command);
     system("output.exe");
-    function_names.clear();
     // from the info file get the location of variables
     find_variable_locations();
 
@@ -1492,5 +1506,6 @@ int main() {
     remove("output.exe");
     remove("info.txt");
     remove("result.txt");
+    remove("temp_source.txt");
 
 }

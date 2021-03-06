@@ -28,15 +28,18 @@ vector<string> source_code; // to find out line by line_number directly
 vector<int> conditional_statements; // to keep track of hierarchy of if else statements
 bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_flag = 0;
 bool replication_in_progress = 0; // to mark replication is start or not
-void process(string line, string number);
+unordered_map<string, vector<int>> marking_lines; // for dependent lines, mark lines which flags dependent lines to include
+unordered_map<string, vector<int>> dependent_lines; // lines like sections and for which haven't processed but should include if marked lines are added
 bool in_thread = 0;
 int parallel_bracket_count = 0;
 int thread_count = 0;
 bool has_section = 0;
 bool has_single_or_master = 0;
-vector<string> must_adding_lines;
 ofstream output;
 int total_number_of_lines_of_header_files = 0;
+pair<string,string> cloning_ends = { "0", "0"};
+
+void process(string line, string number);
 
 struct node {
     vector<struct node*> parent; // contains control, interference and data dependences
@@ -88,18 +91,28 @@ void keywords_init() {
 }
 
 //parse words from the line
-pair<int, string> find_token(int i, string line) {
+pair<int,string> find_token(int i, string line) {
     string temp = "";
-    while (i < line.length() && !(line[i] >= 97 && line[i] <= 122) && !(line[i] >= 65 && line[i] <= 90)
+    bool is_string = 0;
+    while(i < line.length() && !(line[i] >= 97 && line[i] <= 122) && !(line[i] >= 65 && line[i] <= 90)
         && !(line[i] >= 48 && line[i] <= 57) && line[i] != '_' && line[i] != '"' && line[i] != '\'') {
-        i++;
+            i++;
     }
 
-    while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90)
-        || (line[i] >= 48 && line[i] <= 57) || line[i] == '_' || line[i] == '"' || line[i] == '\'')) {
-        temp += line[i++];
+    if(i < line.length() && line[i] == '"') {
+        i++;
+        while(i < line.length() && line[i] != '"') {
+            i++;
+        }
+        i++;
+        return find_token(i, line);
     }
-    return { i, temp };
+
+    while(i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) 
+        || (line[i] >= 48 && line[i] <= 57) || line[i] == '_' || line[i] == '"' || line[i] == '\'')) {
+            temp += line[i++];
+    }
+    return {i, temp};
 }
 
 // find defined and used variables and create node for the statement and push node into code map for defined variable
@@ -186,15 +199,25 @@ void process_for(string line, int currentIndex, string number) {
     code[number] = temp_node;
     string temp1;
     vector<string> tokenized_line;
-    // vector<string> tokenized_number;
+    vector<string> tokenized_number;
     stringstream temp1_line(line.substr(currentIndex + 1));
     while (getline(temp1_line, temp1, ';')) {
         tokenized_line.push_back(temp1);
     }
-    // stringstream temp2_line(number);
-    // while (getline(temp2_line, temp1, '_')) {
-    //     tokenized_number.push_back(temp1);
-    // }
+    stringstream temp2_line(number);
+    while (getline(temp2_line, temp1, '_')) {
+        tokenized_number.push_back(temp1);
+    }
+
+    // add line into marking lines
+    string eralier_line = source_code[stoi(tokenized_number[0]) - 1];
+    pair<int, string> eralier_p = find_token(0, eralier_line);
+    eralier_p = find_token(eralier_p.first, eralier_line);
+    eralier_p = find_token(eralier_p.first, eralier_line);
+    if (eralier_p.second == "for") {
+        marking_lines["for"].push_back(stoi(tokenized_number[0]));
+        dependent_lines["for"].push_back(stoi(tokenized_number[0]) - 1);
+    }
 
     // if (tokenized_number[1] == "0") {
         process_definition(tokenized_line[0], 0, number);
@@ -841,10 +864,10 @@ void find_interference_edges() {
     }
 }
 
-void clone_section(string number) {
+void clone_section() {
     replication_in_progress = 1;
-    stringstream ss1(control_dependence.top()->line_number);
-    stringstream ss2(number);
+    stringstream ss1(cloning_ends.first);
+    stringstream ss2(cloning_ends.second);
     string temp1,temp2;
     getline(ss1, temp1, '#');
     getline(ss2, temp2, '#');
@@ -859,6 +882,9 @@ void clone_section(string number) {
 void process_pragma(string line, int currentIndex, string number) {
     int i = currentIndex;
     struct node* temp_node = new node(number, line);
+    stringstream ss(number);
+    string temp1;
+    getline(ss, temp1, '#');
     // temp_node->in_thread = true;
     pair<int, string> token = find_token(i, line);
     i = token.first;
@@ -868,8 +894,12 @@ void process_pragma(string line, int currentIndex, string number) {
         string temp = token.second;
         if (temp == "parallel") {
             find_shared_variables();
+            cloning_ends.first = number;
         }
         if (temp == "section") {
+            // to add marking line for section
+            marking_lines["section"].push_back(stoi(temp1));
+
             has_section = 1;
             // to remove eralier section from control dependence
             string temp = control_dependence.top()->statement;
@@ -906,6 +936,8 @@ void process_pragma(string line, int currentIndex, string number) {
         else if (temp == "sections" || temp == "section" || temp == "single" || temp == "master") {
             if(temp == "single" || temp == "master") {
                 has_single_or_master = 1;
+            } else if(temp == "sections") {
+                dependent_lines["sections"].push_back(stoi(temp1));
             }
             temp_node->replicate = 0;
         }
@@ -929,6 +961,95 @@ void process_pragma(string line, int currentIndex, string number) {
     }
     // control_dependence.push(temp_node);
     code[number] = temp_node;
+}
+
+void resolve_thread_variables(string number, bool flag) {
+    // before clearing temp_variable_name_to_node, inserting shared variables into main variable_name_to_node
+    if(!temp_variable_name_to_nodes_defined.empty()) {
+        for(auto it:shared_variables) {
+            // cout<<it<<" shared variable\n";
+            if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
+                // cout<<it<<" shared variable inserted\n";
+                vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
+                for(int i=0;i<v.size();i++) {
+                    variable_name_to_nodes[it].push_back(v[i]);
+                }
+            }
+        }
+    }
+    
+    if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
+        threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
+        temp_variable_name_to_nodes_defined.clear();
+        threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
+        temp_variable_name_to_nodes_used.clear();
+    }
+
+    if(has_section) {
+        thread_count++;
+    }
+
+    if(!(has_section || has_single_or_master) && (flag || control_dependence.top()->replicate)) {
+        if(!flag) {
+            in_thread = 1;
+        }
+        parallel_bracket_count++;
+        thread_count++;
+        clone_section();
+        thread_count = 0;
+        parallel_bracket_count--;
+        if(!flag) {
+            in_thread = 0;
+        }
+        if(!temp_variable_name_to_nodes_defined.empty()) {
+            for(auto it:shared_variables) {
+                if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
+                    vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
+                    for(int i=0;i<v.size();i++) {
+                        if (variable_name_to_nodes.find(it) != variable_name_to_nodes.end()) {
+                            // cout<<it<<" reached\n";
+                            vector<struct node*> v1 = variable_name_to_nodes[it];
+                            variable_name_to_nodes[it].push_back(v[i]);
+                            v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size()-1]);
+                            // cout<<v[v.size()-1]->line_number<<" -> "<<v1[v1.size()-1]->line_number<<endl;
+                        } else {
+                            variable_name_to_nodes[it].push_back(v[i]);
+                        }
+                    }
+                }
+            }
+        }
+
+        if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
+            threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
+            temp_variable_name_to_nodes_defined.clear();
+            threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
+            temp_variable_name_to_nodes_used.clear();
+        }
+    }
+
+    // for thread_private variables
+    if (thread_private_variables.size() > 0) {
+        for (auto it : thread_private_variables) {
+            // cout << it << endl;
+            if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
+                // cout << "in thread private variable : " << number << endl;
+                vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
+                for (int i = 0; i < v1.size(); i++) {
+                    variable_name_to_nodes[it].push_back(v1[i]);
+                }
+            }
+            else {
+                cout << number <<" error in }\n";
+            }
+        }
+    }
+
+    find_interference_edges();         
+    threads_variable_name_to_nodes_defined.clear();
+    threads_variable_name_to_nodes_used.clear();
+    temp_variable_name_to_nodes_defined.clear();
+    temp_variable_name_to_nodes_used.clear();
 }
 
 void process(string line, string number) {
@@ -977,9 +1098,6 @@ void process(string line, string number) {
             while(i < line.length()) {
                 p = find_token(i, line);
                 i = p.first;
-                if(p.second == "barrier" || p.second == "flush") {
-                    must_adding_lines.push_back(number);
-                }
                 if (p.second == "threadprivate") {
                     while (i < line.length()) {
                         token = find_token(i, line);
@@ -989,6 +1107,19 @@ void process(string line, string number) {
                             thread_private_variables.insert(token.second);
                         }
                     }
+                    break;
+                } else if(p.second == "barrier") {
+                    // cout<<"reached "<<number<<endl;
+                    stringstream ss(number);
+                    string temp1, temp2 = "";
+                    getline(ss, temp1, '#');
+                    cloning_ends.second = number;
+                    resolve_thread_variables(number, true);
+                    cloning_ends.first = to_string(stoi(temp1) - 1);
+                    if(temp2 != "") {
+                        cloning_ends.first += "#" + temp2;
+                    }
+                    cloning_ends.second = "0";
                     break;
                 }
             }
@@ -1082,98 +1213,22 @@ void process(string line, string number) {
                 if(in_thread && parallel_bracket_count == 0) {
                     in_thread = 0;
                 }
-                struct node* temp_node = new node(line, number);
+                // struct node* temp_node = new node(line, number);
                 // cout<<number<<" line reached : "<<temp_variable_name_to_nodes_defined.size()<<endl;
-                // before clearing temp_variable_name_to_node, inserting shared variables into main variable_name_to_node
-                if(!temp_variable_name_to_nodes_defined.empty()) {
-                    for(auto it:shared_variables) {
-                        // cout<<it<<" shared variable\n";
-                        if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
-                            // cout<<it<<" shared variable inserted\n";
-                            vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
-                            for(int i=0;i<v.size();i++) {
-                                variable_name_to_nodes[it].push_back(v[i]);
-                            }
-                        }
-                    }
-                }
-                
-                if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
-                    threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
-                    temp_variable_name_to_nodes_defined.clear();
-                    threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
-                    temp_variable_name_to_nodes_used.clear();
-                }
-
-                if(has_section) {
-                    thread_count++;
-                }
-
-                if(!(has_section || has_single_or_master) && control_dependence.top()->replicate) {
-                    in_thread = 1;
-                    parallel_bracket_count++;
-                    thread_count++;
-                    clone_section(number);
-                    thread_count = 0;
-                    parallel_bracket_count--;
-                    in_thread = 0;
-                    if(!temp_variable_name_to_nodes_defined.empty()) {
-                        for(auto it:shared_variables) {
-                            if(temp_variable_name_to_nodes_defined.find(it) != temp_variable_name_to_nodes_defined.end()) {
-                                vector<struct node*> v = temp_variable_name_to_nodes_defined[it];
-                                for(int i=0;i<v.size();i++) {
-                                    if (variable_name_to_nodes.find(it) != variable_name_to_nodes.end()) {
-                                        // cout<<it<<" reached\n";
-                                        vector<struct node*> v1 = variable_name_to_nodes[it];
-                                        variable_name_to_nodes[it].push_back(v[i]);
-                                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size()-1]);
-                                        // cout<<v[v.size()-1]->line_number<<" -> "<<v1[v1.size()-1]->line_number<<endl;
-                                    } else {
-                                        variable_name_to_nodes[it].push_back(v[i]);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if(!temp_variable_name_to_nodes_defined.empty() || !temp_variable_name_to_nodes_used.empty()) {
-                        threads_variable_name_to_nodes_defined.push_back(temp_variable_name_to_nodes_defined);
-                        temp_variable_name_to_nodes_defined.clear();
-                        threads_variable_name_to_nodes_used.push_back(temp_variable_name_to_nodes_used);
-                        temp_variable_name_to_nodes_used.clear();
-                    }
-                }
-
-                // for thread_private variables
-                if (thread_private_variables.size() > 0) {
-                    for (auto it : thread_private_variables) {
-                        // cout << it << endl;
-                        if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
-                            // cout << "in thread private variable : " << number << endl;
-                            vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
-                            for (int i = 0; i < v1.size(); i++) {
-                                variable_name_to_nodes[it].push_back(v1[i]);
-                            }
-                        }
-                        else {
-                            cout << number <<" error in }\n";
-                        }
-                    }
-                }
-
-                find_interference_edges();
-                
+                cloning_ends.second = number;
+                resolve_thread_variables(number, false);
                 if(!in_thread) {
                     thread_count = 0;
                 }
 
-                temp_node->parent.push_back(control_dependence.top());
+                // temp_node->parent.push_back(control_dependence.top());
 
-                code[number] = temp_node;
+                // code[number] = temp_node;
                 // cout<<control_dependence.top()->line_number<<" : "<<control_dependence.top()->statement<<" poped\n";
                 control_dependence.pop();
                 p = find_token(0, control_dependence.top()->statement);
                 if(p.second != "pragma") {
+                    cloning_ends = {"0","0"};
                     thread_private_variables.clear();
                     threads_variable_name_to_nodes_defined.clear();
                     threads_variable_name_to_nodes_used.clear();
@@ -1439,8 +1494,44 @@ void show_output(string line_number, vector<string> variable_names) {
         temp_line_numbers.insert(it->line_number);
     }
 
-    for(int i=0;i<must_adding_lines.size();i++) {
-        temp_line_numbers.insert(must_adding_lines[i]);
+    // for sections line
+    vector<int> v1 = dependent_lines["section"];
+    vector<int> v2 = marking_lines["section"];
+    for (int i = 0; i < v2.size(); i++) {
+        string temp1 = to_string(v2[i]) + "@0";
+        string temp2 = to_string(v2[i]) + "@1";
+        string temp3 = to_string(v2[i]) + "@2";
+        string temp4 = to_string(v2[i]) + "@3";
+        if (temp_line_numbers.find(temp1) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp2) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp3) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp4) != temp_line_numbers.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
+            }
+            temp_line_numbers.insert(to_string(last));
+        }
+    }
+
+    // for 'for' line
+    v1 = dependent_lines["for"];
+    v2 = marking_lines["for"];
+    for (int i = 0; i < v2.size(); i++) {
+        string temp = to_string(v2[i]) + "#0";
+        if (temp_line_numbers.find(temp) != temp_line_numbers.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
+            }
+            temp_line_numbers.insert(to_string(last));
+        }
     }
 
     vector<string> ans_temp;
@@ -1509,7 +1600,7 @@ int main() {
     output.open("output.cpp");
     string slicing_line_number;
     int num;
-    cout << "Enter line number where you want to find slicer : ";
+    cout << "Enter line number where you wnat to find slice : ";
     cin >> slicing_line_number;
     cout << "Enter number of variables : ";
     cin >> num;
@@ -1575,7 +1666,7 @@ int main() {
     string temp2 = "";
     temp = to_string(stoi(temp) + total_number_of_lines_of_header_files);
     if(getline(ss, temp2, '_')) {
-        temp += temp2;
+        temp += "_" + temp2;
     }
     slicing_line_number = temp;
     if(code.find(slicing_line_number) == code.end()) {
