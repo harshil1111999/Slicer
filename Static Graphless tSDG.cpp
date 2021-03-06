@@ -62,9 +62,19 @@ void keywords_init() {
 //parse words from the line
 pair<int,string> find_token(int i, string line) {
     string temp = "";
+    bool is_string = 0;
     while(i < line.length() && !(line[i] >= 97 && line[i] <= 122) && !(line[i] >= 65 && line[i] <= 90)
         && !(line[i] >= 48 && line[i] <= 57) && line[i] != '_' && line[i] != '"' && line[i] != '\'') {
             i++;
+    }
+
+    if(i < line.length() && line[i] == '"') {
+        i++;
+        while(i < line.length() && line[i] != '"') {
+            i++;
+        }
+        i++;
+        return find_token(i, line);
     }
 
     while(i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90) 
@@ -1365,4 +1375,6 @@ int main() {
     find_slices(slicing_line_number, function_definition["main"].first, function_definition["main"].second);
 
     show_output(slicing_line_number, variable_names);
+    
+    remove("output.cpp");
 }

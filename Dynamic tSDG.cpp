@@ -32,7 +32,8 @@ bool while_loop_flag = 0, for_loop_flag = 0, function_starting = 0, condition_fl
 int in_parallel_flag = 0; // to check current line is under parallel computing
 int count_for_sections = 0; // for to check when closing bracket of sections construct comes
 bool has_sections = 0; // to mark that code contains sections construct
-vector<string> must_adding_lines;
+unordered_map<string, vector<int>> marking_lines; // for dependent lines, mark lines which flags dependent lines to include
+unordered_map<string, vector<int>> dependent_lines; // lines like sections and for which haven't processed but should include if marked lines are added
 bool has_critical = 0, has_atomic = 0;
 bool functions_added = 0;
 int brackets = 0;
@@ -91,9 +92,19 @@ void keywords_init() {
 //parse words from the line
 pair<int, string> find_token(int i, string line) {
     string temp = "";
+    bool is_string = 0;
     while (i < line.length() && !(line[i] >= 97 && line[i] <= 122) && !(line[i] >= 65 && line[i] <= 90)
         && !(line[i] >= 48 && line[i] <= 57) && line[i] != '_' && line[i] != '"' && line[i] != '\'') {
         i++;
+    }
+
+    if (i < line.length() && line[i] == '"') {
+        i++;
+        while (i < line.length() && line[i] != '"') {
+            i++;
+        }
+        i++;
+        return find_token(i, line);
     }
 
     while (i < line.length() && ((line[i] >= 97 && line[i] <= 122) || (line[i] >= 65 && line[i] <= 90)
@@ -234,6 +245,15 @@ void process_for(string line, int currentIndex, string number) {
     tokenized_number.push_back(temp1);
     getline(temp2_line, temp1, '@');
     tokenized_number.push_back(temp1);
+
+    // add line into marking lines
+    string eralier_line = source_code[stoi(tokenized_number[0]) - 1];
+    pair<int, string> eralier_p = find_token(0, eralier_line);
+    eralier_p = find_token(eralier_p.first, eralier_line);
+    eralier_p = find_token(eralier_p.first, eralier_line);
+    if (eralier_p.second == "for") {
+        marking_lines["for"].push_back(stoi(tokenized_number[0]));
+    }
 
     if (tokenized_number[1] == "0") {
         process_definition(tokenized_line[0], 0, number);
@@ -994,12 +1014,16 @@ void process_pragma(string line, int currentIndex, string number) {
             find_shared_variables();
         }
         if (temp == "section") {
+            stringstream ss1(number);
+            string temp1;
+            getline(ss1, temp1, '@');
+
+            // to add marking line for section
+            marking_lines["section"].push_back(stoi(temp1));
+
             // to remove eralier section from control dependence
             struct node* parent = control_dependence.top();
             if (in_parallel_flag) {
-                stringstream ss1(number);
-                string temp1;
-                getline(ss1, temp1, '@');
                 getline(ss1, temp1, '@');
                 int num = stoi(temp1);
                 if (thread_control_dependence.size() >= num + 1 && !thread_control_dependence[num].empty()) {
@@ -1056,6 +1080,49 @@ void process_pragma(string line, int currentIndex, string number) {
     code[number] = temp_node;
 }
 
+void resolve_thread_variables(string number) {
+    for (int i = 0; i < threads_variable_name_to_nodes_defined.size(); i++) {
+        for (auto it : shared_variables) {
+            if (threads_variable_name_to_nodes_defined[i].find(it) != threads_variable_name_to_nodes_defined[i].end()) {
+                vector<struct node*> v = threads_variable_name_to_nodes_defined[i][it];
+                for (int j = 0; j < v.size(); j++) {
+                    variable_name_to_nodes[it].push_back(v[j]);
+                }
+
+                // to add nodes in parallel thread nodes
+                for (int k = 0; k < i; k++) {
+                    if (threads_variable_name_to_nodes_defined[k].find(it) != threads_variable_name_to_nodes_defined[k].end()) {
+                        vector<struct node*> v1 = threads_variable_name_to_nodes_defined[k][it];
+                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size() - 1]);
+                    }
+                }
+            }
+        }
+    }
+
+    // for thread_private variables
+    if (thread_private_variables.size() > 0) {
+        for (auto it : thread_private_variables) {
+            // cout << it << endl;
+            if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
+                // cout << "in thread private variable : " << number << endl;
+                vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
+                for (int i = 0; i < v1.size(); i++) {
+                    variable_name_to_nodes[it].push_back(v1[i]);
+                }
+            }
+            else {
+                cout << number << " error in }\n";
+            }
+        }
+    }
+
+    find_interference_edges();
+
+    threads_variable_name_to_nodes_defined.clear();
+    threads_variable_name_to_nodes_used.clear();
+}
+
 void process(string line, string number) {
     int i = 0;
     while (i < line.length() && line[i] == ' ') {
@@ -1106,6 +1173,10 @@ void process(string line, string number) {
                             thread_private_variables.insert(token.second);
                         }
                     }
+                    break;
+                }
+                else if (temp == "barrier") {
+                    resolve_thread_variables(number);
                     break;
                 }
             }
@@ -1323,47 +1394,8 @@ void process(string line, string number) {
 
                 if (check) {
                     // cout << "in check " << number << endl;
-                    for (int i = 0; i < threads_variable_name_to_nodes_defined.size(); i++) {
-                        for (auto it : shared_variables) {
-                            if (threads_variable_name_to_nodes_defined[i].find(it) != threads_variable_name_to_nodes_defined[i].end()) {
-                                vector<struct node*> v = threads_variable_name_to_nodes_defined[i][it];
-                                for (int j = 0; j < v.size(); j++) {
-                                    variable_name_to_nodes[it].push_back(v[j]);
-                                }
-
-                                // to add nodes in parallel thread nodes
-                                for (int k = 0; k < i; k++) {
-                                    if (threads_variable_name_to_nodes_defined[k].find(it) != threads_variable_name_to_nodes_defined[k].end()) {
-                                        vector<struct node*> v1 = threads_variable_name_to_nodes_defined[k][it];
-                                        v[v.size() - 1]->parallel_thread_nodes.push_back(v1[v1.size() - 1]);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // for thread_private variables
-                    if (thread_private_variables.size() > 0) {
-                        for (auto it : thread_private_variables) {
-                            // cout << it << endl;
-                            if (threads_variable_name_to_nodes_defined[0].find(it) != threads_variable_name_to_nodes_defined[0].end()) {
-                                // cout << "in thread private variable : " << number << endl;
-                                vector<struct node*> v1 = threads_variable_name_to_nodes_defined[0][it];
-                                for (int i = 0; i < v1.size(); i++) {
-                                    variable_name_to_nodes[it].push_back(v1[i]);
-                                }
-                            }
-                            else {
-                                cout << number << " error in }\n";
-                            }
-                        }
-                    }
-
-                    find_interference_edges();
-
+                    resolve_thread_variables(number); // clear thread variables and find interfernece edges between thread processed variables
                     thread_private_variables.clear();
-                    threads_variable_name_to_nodes_defined.clear();
-                    threads_variable_name_to_nodes_used.clear();
                 }
                 in_parallel_flag--;
                 return;
@@ -1689,13 +1721,49 @@ void show_output(string line_number, vector<string> variable_names) {
         temp_line_numbers.insert(it->line_number);
     }
 
+    // for sections line
+    vector<int> v1 = dependent_lines["section"];
+    vector<int> v2 = marking_lines["section"];
+    for (int i = 0; i < v2.size(); i++) {
+        string temp1 = to_string(v2[i]) + "@0";
+        string temp2 = to_string(v2[i]) + "@1";
+        string temp3 = to_string(v2[i]) + "@2";
+        string temp4 = to_string(v2[i]) + "@3";
+        if (temp_line_numbers.find(temp1) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp2) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp3) != temp_line_numbers.end() || 
+            temp_line_numbers.find(temp4) != temp_line_numbers.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
+            }
+            temp_line_numbers.insert(to_string(last));
+        }
+    }
+
+    // for 'for' line
+    v1 = dependent_lines["for"];
+    v2 = marking_lines["for"];
+    for (int i = 0; i < v2.size(); i++) {
+        string temp = to_string(v2[i]) + "_0@0";
+        if (temp_line_numbers.find(temp) != temp_line_numbers.end()) {
+            int last = 0;
+            for (int j = 0; j < v1.size(); j++) {
+                if (v1[j] > v2[i]) {
+                    break;
+                }
+                last = v1[j];
+            }
+            temp_line_numbers.insert(to_string(last));
+        }
+    }
+
     vector<string> ans_temp;
     for (auto it : temp_line_numbers) {
         ans_temp.push_back(it);
-    }
-
-    for (int i = 0; i < must_adding_lines.size(); i++) {
-        ans_temp.push_back(must_adding_lines[i]);
     }
 
     sort(ans_temp.begin(), ans_temp.end(), cmp);
@@ -1758,6 +1826,9 @@ int can_insert(string line, int number) {
             p = find_token(l, temp);
             l = p.first;
             if (p.second == "sections" || p.second == "atomic" || p.second == "critical") {
+                if (p.second == "sections") {
+                    dependent_lines["section"].push_back(number-1);
+                }
                 return 0;
             }
         }
@@ -1989,7 +2060,7 @@ int main() {
     getline(temp_ss, temp_s, '_');
     slicing_line_number = to_string(stoi(temp_s) + total_number_of_lines_of_header_files);
     if (getline(temp_ss, temp_s, '_')) {
-        slicing_line_number += temp_s;
+        slicing_line_number += "_" + temp_s;
     }
 
     cout << "Source file parsing is in progress...\n";
@@ -2010,8 +2081,8 @@ int main() {
 
     while (!fin.eof()) {
         getline(fin, line);
-        // cout << line << endl;
         source_code.push_back(line);
+        // cout << line << " " << line_count << endl;
         line_count++;
         /*if ((error_in_loop && loop_closed) || (!error_in_loop && line_count > end)) {
             if (!file_closed) {
@@ -2455,9 +2526,14 @@ int main() {
                 has_critical = 1;
             }
             if (p.second == "sections" || p.second == "for" || p.second == "barrier" || p.second == "atomic" || p.second == "critical" || p.second == "flush") {
-                must_adding_lines.push_back(to_string(line_count));
                 if (p.second == "for") {
                     output << "int loop_counter = 0;\n";
+                    dependent_lines["for"].push_back(line_count);
+                    struct node* temp_node = new node(to_string(line_count), line);
+                    code[to_string(line_count)] = temp_node;
+                }
+                else if (p.second == "barrier") {
+                    output << "result<<\"" + to_string(line_count) + "\" <<\"" + "#" + "\";\n";
                 }
                 output << line + "\n";
                 continue;
@@ -2482,10 +2558,12 @@ int main() {
     output.close();
 
     find_trace(slicing_line_number);
+
     remove("./output.cpp");
     remove("./output.exe");
     remove("./result.txt");
     remove("./temp_source.txt");
+    
     if (code.find(slicing_line_number) == code.end()) {
         cout << "You entered line number does not contains \n";
         return 0;
