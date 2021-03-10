@@ -26,8 +26,8 @@ int fun(int x, int *y)
         for (int i = 0; i < 2; i = i + 1)
         {
             k = k + i;
+            x = x + k;
         }
-        x = x + k;
     }
     return x;
 }
