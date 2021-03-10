@@ -1327,7 +1327,7 @@ int main() {
     // to add lines of source code to output file which is helpful in case of importing functions from header files
     string line;
     ifstream fin;
-    fin.open("tSource.cpp");
+    fin.open("tSource4.cpp");
     output.open("output.cpp");
     while (!fin.eof()) {
         getline(fin, line);

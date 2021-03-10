@@ -7,7 +7,7 @@ using namespace std;
 int fun(int x, int *y)
 {
     int k = 10;
-    int c = 10;
+    int c = 2;
 #pragma omp parallel
     {
         if (x > *y)
@@ -21,7 +21,7 @@ int fun(int x, int *y)
         }
         #pragma omp barrier
 #pragma omp for
-        for (int i = 0; i < 2; i = i + 1)
+        for (int i = 0; i < c; i = i + 1)
         {
             k = k + i;
         }

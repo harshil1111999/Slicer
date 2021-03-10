@@ -42,7 +42,7 @@ pair<string,string> cloning_ends = { "0", "0"};
 void process(string line, string number);
 
 struct node {
-    vector<struct node*> parent; // contains control, interference and data dependences
+    unordered_set<struct node*> parent; // contains control, interference and data dependences
     vector<struct node*> parallel_thread_nodes; // after completing parallel region it contains refernce to nodes with same name and last definition from another thread
     struct node* parametere_in_edge, * parametere_out_edge, * calling_edge; // parameter IN/OUT edge
     struct node* return_link;
@@ -170,19 +170,12 @@ void process_definition(string line, int currentIndex, string number) {
             else {
                 v = variable_name_to_nodes[temp];
             }
-            // if(number == "26")
-            // cout<<temp<<endl;
-            temp_node->parent.push_back(v[v.size() - 1]);
-            // if(number == "26")
-            // cout<<temp<<endl;
-            // for(int j=0;j<v.size();j++) {
-            //     temp_node->parent.push_back(v[j]);
-            // }
+            temp_node->parent.insert(v[v.size() - 1]);
         }
     }
 
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     if (in_thread) {
         temp_variable_name_to_nodes_defined[variable_name].push_back(temp_node);
@@ -247,16 +240,9 @@ void process_for(string line, int currentIndex, string number) {
             else {
                 v = variable_name_to_nodes[temp];
             }
-            temp_node->parent.push_back(v[v.size() - 1]);
-            // for(int i=0;i<v.size();i++) {
-            //     temp_node->parent.push_back(v[i]);
-            // }
+            temp_node->parent.insert(v[v.size() - 1]);
         }
     }
-    // if(!control_dependence.empty()) {
-    //     temp_node->parent.push_back(control_dependence.top());
-    // }
-    // control_dependence.push(temp_node);
 }
 
 void process_while(string line, int currentIndex, string number) {
@@ -286,16 +272,9 @@ void process_while(string line, int currentIndex, string number) {
             else {
                 v = variable_name_to_nodes[temp];
             }
-            temp_node->parent.push_back(v[v.size() - 1]);
-            // for(int i=0;i<v.size();i++) {
-            //     temp_node->parent.push_back(v[i]);
-            // }
+            temp_node->parent.insert(v[v.size() - 1]);
         }
     }
-    // if(!control_dependence.empty()) {
-    //     temp_node->parent.push_back(control_dependence.top());
-    // }
-    // control_dependence.push(temp_node);
     code[number] = temp_node;
 }
 
@@ -307,7 +286,7 @@ void process_if(string line, int currentIndex, string number) {
     } else {
         temp_node = new node(number, line);
     }
-    temp_node->parent.push_back(control_dependence.top());
+    temp_node->parent.insert(control_dependence.top());
     // control_dependence.push(temp_node);
     while (i < line.length()) {
         pair<int, string> token = find_token(i, line);
@@ -332,13 +311,9 @@ void process_if(string line, int currentIndex, string number) {
             else {
                 v = variable_name_to_nodes[temp];
             }
-            temp_node->parent.push_back(v[v.size() - 1]);
-            // for(int i=0;i<v.size();i++) {
-            //     temp_node->parent.push_back(v[i]);
-            // }
+            temp_node->parent.insert(v[v.size() - 1]);
         }
     }
-    // cout<<control_dependence.top()->line_number<<endl;
     code[number] = temp_node;
 }
 
@@ -359,7 +334,7 @@ void process_else(string line, int currentIndex, string number) {
     }
     struct node* temp_node = new node(number, line);
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
         // control_dependence.pop();
     }
     // control_dependence.push(temp_node);
@@ -387,7 +362,7 @@ void process_cin(string line, int currentIndex, string number) {
         }
     }
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     code[number] = temp_node;
 }
@@ -420,14 +395,11 @@ void process_cout(string line, int currentIndex, string number) {
             }
             (temp_node->used).insert(temp);
             // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
-            temp_node->parent.push_back(v[v.size() - 1]);
-            // for(int j=0;j<v.size();j++) {
-            //     temp_node->parent.push_back(v[j]);
-            // }
+            temp_node->parent.insert(v[v.size() - 1]);
         }
     }
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     code[number] = temp_node;
 }
@@ -443,10 +415,10 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
             struct node* temp_node = q.front();
             temp_node->flag = true;
             q.pop();
-            vector<struct node*> v1 = temp_node->parent;
-            for (int j = 0; j < v1.size(); j++) {
-                if (!v1[j]->flag) {
-                    q.push(v1[j]);
+            unordered_set<struct node*> v1 = temp_node->parent;
+            for (auto it:v1) {
+                if (!it->flag) {
+                    q.push(it);
                 }
             }
         }
@@ -464,11 +436,11 @@ void find_transitive_dependence_edge(struct node* function_calling_node, string 
             struct node* temp_node = q.front();
             temp_node->flag = false;
             q.pop();
-            vector<struct node*> v1 = temp_node->parent;
-            for (int j = 0; j < v1.size(); j++) {
-                if (v1[j]->flag) {
+            unordered_set<struct node*> v1 = temp_node->parent;
+            for (auto it:v1) {
+                if (it->flag) {
                     // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
-                    q.push(v1[j]);
+                    q.push(it);
                 }
             }
         }
@@ -496,11 +468,11 @@ void find_affect_return_edge(struct node* function_calling_node, string function
         struct node* temp_node = q.front();
         temp_node->flag = true;
         q.pop();
-        vector<struct node*> v1 = temp_node->parent;
-        for (int j = 0; j < v1.size(); j++) {
-            if (!v1[j]->flag) {
+        unordered_set<struct node*> v1 = temp_node->parent;
+        for (auto it:v1) {
+            if (!it->flag) {
                 // cout<<v1[j]->line_number<<" -> "<<v1[j]->statement<<endl;
-                q.push(v1[j]);
+                q.push(it);
             }
         }
     }
@@ -518,11 +490,11 @@ void find_affect_return_edge(struct node* function_calling_node, string function
         struct node* temp_node = q.front();
         temp_node->flag = false;
         q.pop();
-        vector<struct node*> v1 = temp_node->parent;
-        for (int j = 0; j < v1.size(); j++) {
-            if (v1[j]->flag) {
+        unordered_set<struct node*> v1 = temp_node->parent;
+        for (auto it:v1) {
+            if (it->flag) {
                 // cout<<curr<<" "<<v[i]->line_number<<" show output"<<endl;
-                q.push(v1[j]);
+                q.push(it);
             }
         }
     }
@@ -581,7 +553,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
                 else {
                     v = variable_name_to_nodes[temp];
                 }
-                temp_node->parent.push_back(v[v.size() - 1]);
+                temp_node->parent.insert(v[v.size() - 1]);
             }
         }
         code[number] = temp_node;
@@ -607,11 +579,11 @@ void process_function_call(string line, string number, int currentIndex, bool re
             else {
                 v = variable_name_to_nodes[temp];
             }
-            temp_node->parent.push_back(v[v.size() - 1]);
+            temp_node->parent.insert(v[v.size() - 1]);
 
             string temp1 = temp + "_in";
             struct node* actual_in_node = new node(number, temp1 + " = " + temp);
-            actual_in_node->parent.push_back(temp_node);
+            actual_in_node->parent.insert(temp_node);
 
             if(in_thread) {
                 temp_variable_name_to_nodes_defined[temp1].push_back(actual_in_node);
@@ -623,11 +595,11 @@ void process_function_call(string line, string number, int currentIndex, bool re
             (actual_in_node->defined).insert(temp1);
             temp_node->actual_in_nodes.push_back(actual_in_node);
             // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
-            actual_in_node->parent.push_back(temp_node);
+            actual_in_node->parent.insert(temp_node);
             if (i - temp.length() - 1 >= 0 && line[i - temp.length() - 1] == '&') {
                 temp1 = temp + "_out";
                 struct node* actual_out_node = new node(number, temp + " = &" + temp1);
-                actual_out_node->parent.push_back(temp_node);
+                actual_out_node->parent.insert(temp_node);
                 
                 if(in_thread) {
                     temp_variable_name_to_nodes_defined[temp].push_back(actual_out_node);
@@ -640,7 +612,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
                 (actual_out_node->defined).insert(temp);
                 // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
                 temp_node->actual_out_nodes.push_back(actual_out_node);
-                actual_out_node->parent.push_back(temp_node);
+                actual_out_node->parent.insert(temp_node);
             }
             // for(int j=0;j<v.size();j++) {
             //     temp_node->parent.push_back(v[j]);
@@ -702,7 +674,7 @@ void process_function_call(string line, string number, int currentIndex, bool re
 
     //control dependence
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     code[number] = temp_node;
 }
@@ -724,7 +696,7 @@ void process_function_definition(string line, string number, int currentIndex) {
         else {
             string temp1 = temp + "_in";
             struct node* formal_in_node = new node(number, temp + " = " + temp1);
-            formal_in_node->parent.push_back(temp_node);
+            formal_in_node->parent.insert(temp_node);
 
             // if(in_thread) {
             //     temp_variable_name_to_nodes_defined[temp].push_back(formal_in_node);
@@ -737,11 +709,11 @@ void process_function_definition(string line, string number, int currentIndex) {
             (formal_in_node->defined).insert(temp);
             temp_node->formal_in_nodes.push_back(formal_in_node);
             // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
-            formal_in_node->parent.push_back(temp_node);
+            formal_in_node->parent.insert(temp_node);
             if (i - temp.length() - 1 >= 0 && line[i - temp.length() - 1] == '*') {
                 temp1 = temp + "_out";
                 struct node* formal_out_node = new node(number, temp1 + " = *" + temp);
-                formal_out_node->parent.push_back(temp_node);
+                formal_out_node->parent.insert(temp_node);
 
                 // if(in_thread) {
                 //     temp_variable_name_to_nodes_defined[temp1].push_back(formal_out_node);
@@ -754,7 +726,7 @@ void process_function_definition(string line, string number, int currentIndex) {
                 (formal_out_node->defined).insert(temp1);
                 // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
                 temp_node->formal_out_nodes.push_back(formal_out_node);
-                formal_out_node->parent.push_back(temp_node);
+                formal_out_node->parent.insert(temp_node);
             }
             // for(int j=0;j<v.size();j++) {
             //     temp_node->parent.push_back(v[j]);
@@ -797,7 +769,7 @@ void process_return(string line, int currentIndex, string number) {
             }
             (temp_node->used).insert(temp);
             // cout<<number<<" - "<<v[v.size()-1]->line_number<<" in cout"<<endl;
-            temp_node->parent.push_back(v[v.size() - 1]);
+            temp_node->parent.insert(v[v.size() - 1]);
             // for(int j=0;j<v.size();j++) {
             //     temp_node->parent.push_back(v[j]);
             // }
@@ -805,7 +777,7 @@ void process_return(string line, int currentIndex, string number) {
     }
 
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     code[number] = temp_node;
     // cout<<control_dependence.top()->statement<<" in return processing\n";
@@ -829,7 +801,7 @@ void process_return(string line, int currentIndex, string number) {
         else {
             v1 = variable_name_to_nodes[temp];
         }
-        v[i]->parent.push_back(v1[v1.size() - 1]);
+        v[i]->parent.insert(v1[v1.size() - 1]);
     }
     // control_dependence.pop();
 }
@@ -854,7 +826,7 @@ void find_interference_edges() {
                         vector<struct node*> temp2 = mp1[it];
                         for(int k=0;k<temp1.size();k++) {     // run over all used nodes
                             for(int l=0;l<temp2.size();l++) {  // run over all defined nodes
-                                temp1[k]->parent.push_back(temp2[l]);  // make interference edge between used -> defined nodes
+                                temp1[k]->parent.insert(temp2[l]);  // make interference edge between used -> defined nodes
                             }
                         }
                     }
@@ -957,7 +929,7 @@ void process_pragma(string line, int currentIndex, string number) {
         }
     }
     if (!control_dependence.empty()) {
-        temp_node->parent.push_back(control_dependence.top());
+        temp_node->parent.insert(control_dependence.top());
     }
     // control_dependence.push(temp_node);
     code[number] = temp_node;
@@ -1166,7 +1138,7 @@ void process(string line, string number) {
                 }
                 struct node* temp_node = code[temp4];
                 if (!control_dependence.empty()) {
-                    temp_node->parent.push_back(control_dependence.top());
+                    temp_node->parent.insert(control_dependence.top());
                 }
                 control_dependence.push(temp_node);
             }
@@ -1261,7 +1233,7 @@ void process(string line, string number) {
                     else {
                         v1 = variable_name_to_nodes[temp];
                     }
-                    v[i]->parent.push_back(v1[v1.size() - 1]);
+                    v[i]->parent.insert(v1[v1.size() - 1]);
                 }
             }
             // cout<<control_dependence.top()->line_number<<" : "<<control_dependence.top()->statement<<" poped\n";
@@ -1334,10 +1306,10 @@ void show_output(string line_number, vector<string> variable_names) {
     if(q.empty()) {
         for(int i=0;i<variable_names.size();i++) {
             if(temp_node->used.find(variable_names[i]) != temp_node->used.end()) {
-                vector<struct node*> parent = temp_node->parent;
-                for(int j=0;j<parent.size();j++) {
-                    if(parent[j]->defined.find(variable_names[i]) != parent[j]->defined.end()) {
-                        q.push(parent[j]);
+                unordered_set<struct node*> parent = temp_node->parent;
+                for(auto it:parent) {
+                    if(it->defined.find(variable_names[i]) != it->defined.end()) {
+                        q.push(it);
                     }
                 }
             } else {
@@ -1366,14 +1338,14 @@ void show_output(string line_number, vector<string> variable_names) {
         ans.insert(curr);
         q.pop();
         // cout<<curr<<" output\n";
-        vector<struct node*> v = curr->parent;
+        unordered_set<struct node*> v = curr->parent;
 
         //to find control and data dependent nodes
-        for (int i = 0; i < v.size(); i++) {
+        for (auto it:v) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
             // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
-            if (ans.find(v[i]) == ans.end()) {
-                q.push(v[i]);
+            if (ans.find(it) == ans.end()) {
+                q.push(it);
             }
         }
 
@@ -1390,20 +1362,20 @@ void show_output(string line_number, vector<string> variable_names) {
         }
 
         // to find transitive dependent nodes
-        v = curr->transitive_edge;
-        for (int i = 0; i < v.size(); i++) {
+        v1 = curr->transitive_edge;
+        for (int i = 0; i < v1.size(); i++) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
-            if (ans.find(v[i]) == ans.end()) {
-                q.push(v[i]);
+            if (ans.find(v1[i]) == ans.end()) {
+                q.push(v1[i]);
             }
         }
 
         //affect return edges
-        v = curr->affect_return_edge;
-        for (int i = 0; i < v.size(); i++) {
+        v1 = curr->affect_return_edge;
+        for (int i = 0; i < v1.size(); i++) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
-            if (ans.find(v[i]) == ans.end()) {
-                q.push(v[i]);
+            if (ans.find(v1[i]) == ans.end()) {
+                q.push(v1[i]);
             }
         }
     }
@@ -1435,15 +1407,15 @@ void show_output(string line_number, vector<string> variable_names) {
         }
 
         // cout<<curr<<" output\n";
-        vector<struct node*> v = curr->parent;
+        unordered_set<struct node*> v = curr->parent;
 
         //to find control and data dependent nodes
-        for (int i = 0; i < v.size(); i++) {
+        for (auto it:v) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output control, data"<<endl;
             // if(v[i]->mark && ans.find(v[i]) == ans.end()) {
-            if (ans.find(v[i]) == ans.end()) {
-                ans.insert(v[i]);
-                q.push(v[i]);
+            if (ans.find(it) == ans.end()) {
+                ans.insert(it);
+                q.push(it);
             }
         }
 
@@ -1455,22 +1427,22 @@ void show_output(string line_number, vector<string> variable_names) {
         }
 
         // to find transitive dependent nodes
-        v = curr->transitive_edge;
-        for (int i = 0; i < v.size(); i++) {
+        v1 = curr->transitive_edge;
+        for (int i = 0; i < v1.size(); i++) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output transitive"<<endl;
-            if (ans.find(v[i]) == ans.end()) {
-                ans.insert(v[i]);
-                q.push(v[i]);
+            if (ans.find(v1[i]) == ans.end()) {
+                ans.insert(v1[i]);
+                q.push(v1[i]);
             }
         }
 
         // affect return nodes
-        v = curr->affect_return_edge;
-        for (int i = 0; i < v.size(); i++) {
+        v1 = curr->affect_return_edge;
+        for (int i = 0; i < v1.size(); i++) {
             // cout<<curr->line_number<<" : "<<curr->statement<<" -> "<<v[i]->statement<<" show output affect return"<<endl;
-            if (ans.find(v[i]) == ans.end()) {
-                ans.insert(v[i]);
-                q.push(v[i]);
+            if (ans.find(v1[i]) == ans.end()) {
+                ans.insert(v1[i]);
+                q.push(v1[i]);
             }
         }
 
@@ -1495,31 +1467,47 @@ void show_output(string line_number, vector<string> variable_names) {
     }
 
     // for sections line
-    vector<int> v1 = dependent_lines["section"];
-    vector<int> v2 = marking_lines["section"];
-    for (int i = 0; i < v2.size(); i++) {
-        string temp1 = to_string(v2[i]) + "@0";
-        string temp2 = to_string(v2[i]) + "@1";
-        string temp3 = to_string(v2[i]) + "@2";
-        string temp4 = to_string(v2[i]) + "@3";
-        if (temp_line_numbers.find(temp1) != temp_line_numbers.end() || 
-            temp_line_numbers.find(temp2) != temp_line_numbers.end() || 
-            temp_line_numbers.find(temp3) != temp_line_numbers.end() || 
-            temp_line_numbers.find(temp4) != temp_line_numbers.end()) {
-            int last = 0;
-            for (int j = 0; j < v1.size(); j++) {
-                if (v1[j] > v2[i]) {
-                    break;
-                }
-                last = v1[j];
-            }
-            temp_line_numbers.insert(to_string(last));
-        }
-    }
+    // vector<int> v1 = dependent_lines["section"];
+    // vector<int> v2 = marking_lines["section"];
+    // for (int i = 0; i < v2.size(); i++) {
+    //     string temp1 = to_string(v2[i]) + "#0";
+    //     string temp2 = to_string(v2[i]) + "#1";
+    //     string temp3 = to_string(v2[i]) + "#2";
+    //     string temp4 = to_string(v2[i]) + "#3";
+    //     if (temp_line_numbers.find(temp1) != temp_line_numbers.end() || 
+    //         temp_line_numbers.find(temp2) != temp_line_numbers.end() || 
+    //         temp_line_numbers.find(temp3) != temp_line_numbers.end() || 
+    //         temp_line_numbers.find(temp4) != temp_line_numbers.end()) {
+    //         int last = 0;
+    //         for (int j = 0; j < v1.size(); j++) {
+    //             if (v1[j] > v2[i]) {
+    //                 break;
+    //             }
+    //             last = v1[j];
+    //         }
+    //         temp_line_numbers.insert(to_string(last));
+    //     }
+        // struct node* temp_node;
+        // if(code.find(temp1) != code.end()) {
+        //     temp_node = code[temp1];
+        //     cout<<temp1<<endl;
+        // } else {
+        //     temp_node = code[temp2];
+        //     cout<<temp2<<endl;
+        // }
+
+        // unordered_set<node*> v = temp_node->parent;
+        
+        // for(auto it:v) {
+        //     cout<<it->line_number<<endl;
+        //     if(code.find())
+        // }
+        // cout<<endl;
+    // }
 
     // for 'for' line
-    v1 = dependent_lines["for"];
-    v2 = marking_lines["for"];
+    vector<int> v1 = dependent_lines["for"];
+    vector<int> v2 = marking_lines["for"];
     for (int i = 0; i < v2.size(); i++) {
         string temp = to_string(v2[i]) + "#0";
         if (temp_line_numbers.find(temp) != temp_line_numbers.end()) {
@@ -1530,6 +1518,20 @@ void show_output(string line_number, vector<string> variable_names) {
                 }
                 last = v1[j];
             }
+            struct node* temp_node = new node(to_string(last), source_code[last]);
+            
+            struct node* temp1 = code[temp];
+            unordered_set<node*> v = temp1->parent;
+            for(auto it:v) {
+                pair<int,string> p = find_token(0, it->statement);
+                if(p.second == "if" || p.second == "else" || p.second == "pragma") {
+                    temp_node->parent.insert(it);
+                    temp1->parent.erase(it);
+                    temp1->parent.insert(temp_node);
+                }
+            }
+
+            code[to_string(last)] = temp_node;
             temp_line_numbers.insert(to_string(last));
         }
     }
@@ -1596,7 +1598,7 @@ int main() {
     source_code.push_back("");
     string line;
     ifstream fin;
-    fin.open("tSource.cpp");
+    fin.open("tSource4.cpp");
     output.open("output.cpp");
     string slicing_line_number;
     int num;

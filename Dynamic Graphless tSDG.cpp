@@ -677,10 +677,15 @@ void process_pragma(string line, int currentIndex, string number) {
 
     // for to add in marking line
     pair<int, string> p = find_token(0, line);
-    p = find_token(p.first, line);
-    p = find_token(p.first, line);
-    if (p.second == "section") {
-        marking_lines["section"].push_back(stoi(number));
+
+    int i = 0;
+    while (i < line.length()) {
+        p = find_token(i, line);
+        i = p.first;
+        if (p.second == "section") {
+            marking_lines["section"].push_back(stoi(number));
+            break;
+        }
     }
 
     if (!control_dependence.empty() && function_names.find(control_dependence.top()) == function_names.end()) {
@@ -698,6 +703,14 @@ void process_pragma(string line, int currentIndex, string number) {
 
 void process(string line, string number) {
     int i = 0;
+    while (i < line.length() && line[i] == ' ') {
+        i++;
+    }
+    if (i < line.length() && line[i] == '/' && i + 1 < line.length() && line[i + 1] == '/') {
+        return;
+    }
+
+    i = 0;
     pair<int, string> token = find_token(i, line);
     i = token.first;
     string temp = token.second;
@@ -723,6 +736,35 @@ void process(string line, string number) {
             break;
         case 7:
             process_return(line, i, number);
+            break;
+        case 9:
+            pair<int, string> p = find_token(0, line);
+            int i = 0;
+            while (i < line.length()) {
+                p = find_token(i, line);
+                i = p.first;
+                if (p.second == "reduction") {
+                    stringstream ss(number);
+                    string temp;
+                    getline(ss, temp, ',');
+                    definition[number].push_back("reduction" + temp);
+                    vector<string> temp_v;
+                    use[number].push_back(temp_v);
+                    while (i < line.length()) {
+                        p = find_token(i, line);
+                        i = p.first;
+                        if (p.second != "" && datatypes.find(p.second) == datatypes.end() && !(p.second[0] >= 48 && p.second[0] <= 57)
+                            && keywords.find(p.second) == keywords.end()) {
+                            string address = variable_to_location_map[number][p.second];
+                            use[number][use[number].size() - 1].push_back(address);
+                        }
+                    }
+                }
+            }
+            stringstream ss(number);
+            string temp;
+            getline(ss, temp, ',');
+            find_slice(temp);
             break;
         }
     }
@@ -845,6 +887,7 @@ void find_trace(int slicing_line_number, vector<string> variable_names) {
         getline(temp2_line, temp2, ',');
         // cout << source_code[stoi(temp2)] << " " << temp1 << endl;
         process(source_code[stoi(temp2)], temp1);
+        // cout << source_code[stoi(temp2)] << " " << temp1 << endl;
         find_slice(temp1);
 
         if (stoi(temp2) == slicing_line_number) {
@@ -908,6 +951,12 @@ void find_trace(int slicing_line_number, vector<string> variable_names) {
                     break;
                 }
                 last = v1[j];
+            }
+            if (dynamic_slice.find("reduction" + to_string(last)) != dynamic_slice.end()) {
+                unordered_set<int> temp = dynamic_slice["reduction" + to_string(last)];
+                for (auto it : temp) {
+                    st.insert(it);
+                }
             }
             st.insert(last);
         }
@@ -1100,7 +1149,7 @@ int main() {
     source_code.push_back("");
     string line;
     ifstream fin;
-    fin.open("tSource.cpp");
+    fin.open("tSource4.cpp");
     temp_source.open("temp_source.cpp");
     // to add lines of source code to output file which is helpful in case of importing functions from header files
     while (!fin.eof()) {
@@ -1471,6 +1520,27 @@ int main() {
                     }
                 }
                 continue;
+            }
+            if (p.second == "for") {
+                while (j < line.length()) {
+                    p = find_token(j, line);
+                    j = p.first;
+                    if (p.second == "reduction") {
+                        p = find_token(j, line);
+                        if (p.second != "") {
+                            if (!has_critical && !has_atomic) {
+                                output << "#pragma omp critical\n";
+                                output << "{\n";
+                            }
+                            output << "counter = counter + 1;\n";
+                            output << "result<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\"#\"" + ";\n";
+                            output << "info<<\"" + to_string(line_count) + "\"<<\",\"" + "<<to_string(counter)" + "<<\":\"<<\"" + p.second + "\"<<\",\"<<" + "&" + p.second + "<<\"#\";\n";
+                            if (!has_critical && !has_atomic) {
+                                output << "}\n";
+                            }
+                        }
+                    }
+                }
             }
             if (p.second == "sections") {
                 dependent_lines["sections"].push_back(line_count);

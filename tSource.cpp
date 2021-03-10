@@ -1,4 +1,5 @@
 #include<stdio.h>
+#include <string>
 #include<conio.h>
 #include<iostream>
 #include<omp.h>
@@ -25,7 +26,7 @@ int main()
         cout << i << endl;
         x = x + 1;
     }
-    cout << x << endl;
+    cout << "x value : " << x << endl;
     if (x > 0)
     {
         y = y + 1;
