@@ -1,0 +1,4 @@
+Algorithm Name,Execution Time,Source Program Line Count, Slice Line Count
+Static Graphless,17.832207699999998,44,18
+Static Graphless,0.6898112999999952,44,18
+Static Graph,20.139596799999993,63,42
