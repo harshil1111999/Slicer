@@ -38,4 +38,5 @@ int main()
         cout << x << endl;
     }
     z = x + y;
+    cout<<z<<endl;
 }
