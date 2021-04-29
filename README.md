@@ -16,7 +16,7 @@ To execute the C++ algorithm files, we can do that by executing the particular a
 $ g++ -o test.o algorithm_file.cpp
 $ test.o
 ```
-To execute the application move to the `app` folder and execute the python script `app.py`:
+There are sample programs that can be used to execute the application, prefixed with `tSource`. To execute the application move to the `app` folder and execute the python script `app.py`:
 ```bash
 $ py app.py
 ```
@@ -24,6 +24,7 @@ To execute the tests present in the `test` folder, execute the following command
 ```bash
 $ py -W ignore test.py 
 ```
+ A `Latex` report corresponding to this project is present in `report`. There are many tools available to render the latex file like [Overleaf](https://www.overleaf.com/), MiKTeX, TeX Live, MacTeX, etc. 
 
 ## Acknowledgement
 We would like to thank Prof. Jayprakash Lalchandani for the guidance and the valuable feedback throughout the project.
